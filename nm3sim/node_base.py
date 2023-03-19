@@ -40,6 +40,7 @@ class NodeBase:
         self._address = 255
         self._depth = 100.0
         self._position_xy = (0.0, 0.0)
+        self._label = None
 
 
     def __call__(self):
@@ -73,3 +74,11 @@ class NodeBase:
     @position_xy.setter
     def position_xy(self, position_xy: Tuple[float, float]):
         self._position_xy = position_xy
+
+    @property
+    def label(self) -> str:
+        return self._label
+
+    @label.setter
+    def label(self, label: str):
+        self._label = label

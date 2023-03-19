@@ -33,9 +33,10 @@ class NodePacket:
     """Node Packet class."""
 
 
-    def __init__(self, position_xy=(0.0,0.0), depth=10.0):
+    def __init__(self, position_xy=(0.0,0.0), depth=10.0, label=None):
         self._position_xy = position_xy
         self._depth = depth
+        self._label = label
 
     @property
     def position_xy(self):
@@ -53,16 +54,25 @@ class NodePacket:
     def depth(self, depth):
         self._depth = depth
 
+    @property
+    def label(self) -> str:
+        return self._label
+
+    @label.setter
+    def label(self, label: str):
+        self._label = label
+
+
     def json(self):
         """Returns a json dictionary representation."""
         jason = {"PositionXY": { "x": self._position_xy[0], "y": self._position_xy[1] },
-                 "Depth": self._depth}
+                 "Depth": self._depth, "Label": self._label}
         return jason
 
     @staticmethod
     def from_json(jason): # -> Union[NodePacket, None]:
         node_packet = NodePacket(position_xy=(jason["PositionXY"]["x"], jason["PositionXY"]["y"]),
-                                 depth=jason["Depth"])
+                                 depth=jason["Depth"], label=jason["Label"])
 
         return node_packet
 

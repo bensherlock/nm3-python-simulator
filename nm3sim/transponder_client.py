@@ -60,6 +60,9 @@ def main():
     cmdline_parser.add_argument('--position', help="Node position as (x,y,depth).", dest="position",
                                 type=node_position_parser)
 
+    # Label
+    cmdline_parser.add_argument('--label',
+                                help='The label for this node.')
 
 
     # Parse the command line
@@ -75,6 +78,8 @@ def main():
     if cmdline_args.position:
         position_xy, depth = cmdline_args.position
 
+    label = cmdline_args.label
+
     address = 255
     if cmdline_args.address:
         address = cmdline_args.address
@@ -88,12 +93,13 @@ def main():
 
     # input_stream, output_stream, network_address=None, network_port=None, local_address=255, position_xy=(0.0,0.0), depth=10.0):
     modem = Modem(input_stream=None,
-                    output_stream=None,
-                    network_address=network_address,
-                    network_port=network_port,
-                    local_address=address,
-                    position_xy=position_xy,
-                    depth=depth)
+                  output_stream=None,
+                  network_address=network_address,
+                  network_port=network_port,
+                  local_address=address,
+                  position_xy=position_xy,
+                  depth=depth,
+                  label=label)
 
     modem.run()
 

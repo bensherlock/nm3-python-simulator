@@ -84,7 +84,7 @@ class Modem:
 
 
     def __init__(self, input_stream, output_stream,
-                 network_address=None, network_port=None, local_address: int =255, position_xy=(0.0,0.0), depth=10.0):
+                 network_address=None, network_port=None, local_address: int =255, position_xy=(0.0,0.0), depth=10.0, label=None):
         """input_stream and output_stream implement the Bytes IO interface.
         Namely: readable()->bool, writeable()->bool, read(bytes) and write(bytes)."""
         self._input_stream = input_stream
@@ -121,6 +121,7 @@ class Modem:
         self._position_xy = position_xy
         self._depth = depth
         self._position_information_updated = True
+        self._label = label
 
         self._startup_time = time.time()
         self._local_received_time = None
@@ -149,6 +150,15 @@ class Modem:
     def depth(self, depth):
         self._depth = depth
         self._position_information_updated = True
+
+    @property
+    def label(self) -> str:
+        return self._label
+
+    @label.setter
+    def label(self, label: str):
+        self._label = label
+
 
 
     def get_hamr_time(self, local_time=None):
@@ -192,7 +202,7 @@ class Modem:
             if self._position_information_updated:
                 # Send positional information update
                 self._position_information_updated = False
-                node_packet = NodePacket(position_xy=self._position_xy, depth=self._depth)
+                node_packet = NodePacket(position_xy=self._position_xy, depth=self._depth, label=self._label)
                 self.send_node_packet(node_packet)
 
             if self._input_stream and self._input_stream.readable():

@@ -61,10 +61,13 @@ def _debug_print(*args, **kwargs):
 class Controller:
     """Controller. """
 
-    def __init__(self, network_address=None, network_port=None):
+    def __init__(self, network_address=None, network_port=None, publish_port=None):
         self._network_address = network_address
         self._network_port = network_port
         self._socket = None
+
+        self._publish_port = publish_port
+        self._publish_socket = None
 
         # NTP Offset to synchronise timestamps
         self._ntp_offset = 0.0
@@ -231,15 +234,24 @@ class Controller:
 
         if "NodePacket" in network_message_jason:
             _debug_print("NodePacket")
+            if self._publish_socket:
+                # Forward to loggers and visualisation clients
+                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+
             node = self.get_node(unique_id)
             if node:
                 node_packet = NodePacket.from_json(network_message_jason["NodePacket"])
                 node.position_xy = node_packet.position_xy
                 node.depth = node_packet.depth
+                node.label = node_packet.label
                 self.update_node(node)
 
         if "AcousticPacket" in network_message_jason:
             _debug_print("AcousticPacket")
+            if self._publish_socket:
+                # Forward to loggers and visualisation clients
+                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+
             # Send to all nodes, except this one
             # For now this is instant: no propagation, or probability, or filtering.
             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
@@ -327,6 +339,16 @@ class Controller:
             #self._socket_loop.start()
             #IOLoop.instance().start() # Stays here
 
+        if self._publish_socket:
+            # Already created
+            pass
+        else:
+            # Publish socket for subscribers such as loggers or visualisation
+            context = zmq.Context()
+            self._publish_socket = context.socket(zmq.PUB)
+            socket_string = "tcp://" + self._network_address + ":"+ str(self._publish_port)
+            print("Binding Publisher to: " + socket_string)
+            self._publish_socket.bind(socket_string)
 
 
         while True:
@@ -372,6 +394,9 @@ def main():
                                 help='The network address to connect to.')
 
 
+    # Publish Port
+    cmdline_parser.add_argument('--publish_port',
+                                help='The publish port to connect to.', type=int)
 
     # Parse the command line
     cmdline_args = cmdline_parser.parse_args()
@@ -381,6 +406,7 @@ def main():
 
     network_address = cmdline_args.network_address
 
+    publish_port = cmdline_args.publish_port
 
 
 
@@ -393,7 +419,7 @@ def main():
     print("pyzmq version: " + zmq.pyzmq_version())
 
     controller = Controller(
-        network_address=network_address, network_port=network_port)
+        network_address=network_address, network_port=network_port, publish_port=publish_port)
 
     propagation_model = PropagationModelBase()
     controller.propagation_model = propagation_model
