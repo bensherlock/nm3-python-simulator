@@ -6,7 +6,7 @@ Python Simulator Framework using the NM3 Modems
 
 Simply clone the repository and use pip to install a few dependencies.
 
-https://github.com/bensherlock/nm3-python-simulator
+`https://github.com/bensherlock/nm3-python-simulator`
 
 # Dependencies
 
@@ -14,22 +14,27 @@ https://github.com/bensherlock/nm3-python-simulator
 
 Provides the network connectivity between controller and client nodes. https://zeromq.org/
 
-pip install zmq
+`pip install zmq`
 
 ## pyserial
 
 Provides the connection to hardware nodes connected via USB-RS232 cables. 
 
-pip install pyserial
+`pip install pyserial`
 
 ## matplotlib
 
 Provides the visualisations. https://matplotlib.org/
 
-pip install matplotlib
+`pip install matplotlib`
 
 # Usage
 
+## Controller
+
+A controller instance is always required. 
+
+`D:\nm3-python-simulator>python -m nm3sim.controller --network_address 127.0.0.1 --network_port 8080 --publish_port 8081`
 
 # Issues
 
