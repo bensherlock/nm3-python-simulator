@@ -52,7 +52,7 @@ Connects to the node port (network_port) of the controller.
 
 Connects to the node port (network_port) of the controller.
 
-`D:\nm3-python-simulator>python -m nm3sim.serial_client --network_address 127.0.0.1 --network_port 8080 --position (-100,100,10) --label "A" --address 3 --serial_port "COM5"`
+`D:\nm3-python-simulator>python -m nm3sim.serial_client --network_address 127.0.0.1 --network_port 8080 --position (-100,100,10) --label "A" --address 4 --serial_port "COM5"`
 
 ## Map Visualisation Client
 
