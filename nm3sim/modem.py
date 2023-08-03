@@ -80,8 +80,31 @@ class Modem:
 
     ACOUSTIC_STATES = (ACOUSTIC_STATE_IDLE, ACOUSTIC_STATE_WAIT_ACK)
 
-    BYTE_PARSER_TIMEOUT = 0.100
+    MODEM_STATE_LISTENING, MODEM_STATE_RECEIVING, MODEM_STATE_TRANSMITTING,\
+        MODEM_STATE_UARTING, MODEM_STATE_SLEEPING = range(5)
 
+    MODEM_STATE_NAMES = {
+        MODEM_STATE_LISTENING: 'Listening',
+        MODEM_STATE_RECEIVING: 'Receiving',
+        MODEM_STATE_TRANSMITTING: 'Transmitting',
+        MODEM_STATE_UARTING: 'UARTing',
+        MODEM_STATE_SLEEPING: 'Sleeping'
+    }
+
+    MODEM_STATES = (MODEM_STATE_LISTENING, MODEM_STATE_RECEIVING, MODEM_STATE_TRANSMITTING,
+                    MODEM_STATE_UARTING, MODEM_STATE_SLEEPING)
+
+    MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_COMPLETE = range(3)
+
+    MODEM_EVENT_NAMES = {
+        MODEM_EVENT_RECEIVE_SUCCESS: 'Receive Success',
+        MODEM_EVENT_RECEIVE_FAIL: 'Receive Fail',
+        MODEM_EVENT_TRANSMIT_COMPLETE: 'Transmit Complete'
+    }
+
+    MODEM_EVENTS = (MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_COMPLETE)
+
+    BYTE_PARSER_TIMEOUT = 0.100
 
     def __init__(self, input_stream, output_stream,
                  network_address=None, network_port=None, local_address: int =255, position_xy=(0.0,0.0), depth=10.0, label=None):
@@ -89,12 +112,13 @@ class Modem:
         Namely: readable()->bool, writeable()->bool, read(bytes) and write(bytes)."""
         self._input_stream = input_stream
         self._output_stream = output_stream
-        self._simulator_state = self.SIMULATOR_STATE_IDLE
-        self._acoustic_state = self.ACOUSTIC_STATE_IDLE
+        self._simulator_state = Modem.SIMULATOR_STATE_IDLE
+        self._acoustic_state = Modem.ACOUSTIC_STATE_IDLE
         self._acoustic_ack_wait_address = None
         self._acoustic_ack_wait_time = None
+        self._modem_state = Modem.MODEM_STATE_LISTENING
 
-        self._acoustic_ack_fixed_offset_time = 0.040 # 40ms
+        self._acoustic_ack_fixed_offset_time = 0.040  # 40ms
 
         self._network_address = network_address
         self._network_port = network_port
@@ -159,8 +183,6 @@ class Modem:
     def label(self, label: str):
         self._label = label
 
-
-
     def get_hamr_time(self, local_time=None):
         """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
         if local_time:
@@ -210,8 +232,12 @@ class Modem:
                 some_bytes = self._input_stream.read()  # Read
 
                 if some_bytes:
-                    #_debug_print("some_bytes=" + str(some_bytes))
-                    self.process_bytes(some_bytes)
+                    if self._modem_state == Modem.MODEM_STATE_LISTENING \
+                            or self._modem_state == Modem.MODEM_STATE_UARTING:
+                        # Can only process received bytes if the modem is in listening mode or is
+                        # already communicating over uart with the user.
+                        #_debug_print("some_bytes=" + str(some_bytes))
+                        self.process_bytes(some_bytes)
 
             # Poll the socket for incoming "acoustic" messages
             #_debug_print("Checking socket poller")
