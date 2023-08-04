@@ -104,6 +104,19 @@ class Modem:
 
     MODEM_EVENTS = (MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_COMPLETE)
 
+    RECEIVER_STATE_QUIET, RECEIVER_STATE_SINGLE_ARRIVAL, RECEIVER_STATE_OVERLAPPED_ARRIVAL,\
+        RECEIVER_STATE_SATURATED = range(4)
+
+    RECEIVER_STATES = (RECEIVER_STATE_QUIET, RECEIVER_STATE_SINGLE_ARRIVAL,
+                       RECEIVER_STATE_OVERLAPPED_ARRIVAL, RECEIVER_STATE_SATURATED)
+
+    RECEIVER_STATE_NAMES = {
+        RECEIVER_STATE_QUIET: 'Quiet',
+        RECEIVER_STATE_SINGLE_ARRIVAL: 'Single Arrival',
+        RECEIVER_STATE_OVERLAPPED_ARRIVAL: 'Overlapped Arrival',
+        RECEIVER_STATE_SATURATED: 'Saturated'
+    }
+
     BYTE_PARSER_TIMEOUT = 0.100
 
     def __init__(self, input_stream, output_stream,
@@ -117,6 +130,7 @@ class Modem:
         self._acoustic_ack_wait_address = None
         self._acoustic_ack_wait_time = None
         self._modem_state = Modem.MODEM_STATE_LISTENING
+        self._receiver_state = Modem.RECEIVER_STATE_QUIET
 
         self._acoustic_ack_fixed_offset_time = 0.040  # 40ms
 
