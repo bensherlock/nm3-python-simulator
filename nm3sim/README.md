@@ -4,7 +4,7 @@
 + NodeBase class
 + NodePacket class
 
-The BaseNode holds a 3d position in the virtual sea. Changes to the position result in NodePackets being sent to the simulation controller. These positions are then used by the controller to determine propagation delay and transmission losses. Visualisations use the node positions as centre points for displaying the outward propagating acoustic signals.  
+The BaseNode is used at the controller, each has a unique id and holds a 3d position in the virtual sea. Changes to the position at the clients result in NodePackets being sent to the simulation controller. These positions are then used by the controller to determine propagation delay and transmission losses. Visualisations use the published positions as centre points for displaying the outward propagating acoustic signals.  
 
 
 ## Modem
@@ -25,8 +25,6 @@ ReceiveChannelStatus covers the simulated front end acoustic receiver of the Mod
 + SinglePacketArrival - A single acoustic transmission is currently arriving at the front end. The Modem is likely to be in Receiving state now.
 + OverlappedPacketArrival - More than one acoustic transmission is currently arriving at the front end. For now this will result in both acoustic packets counting as failed.
 + Saturated - A transmission is currently ongoing so no incoming acoustic transmissions would be received by the front end.
-
-The Modem currently replicates the BaseNode properties rather than inheriting from or encapuslating it - this may change later.
 
 
 ## Client Applications
