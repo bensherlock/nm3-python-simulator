@@ -20,10 +20,10 @@ The Modem has a ModemStatus:
 + SerialCommunicating - The Modem is currently processing SerialCommands and will not synch onto incoming acoustic packets.
 + Sleeping - The Modem is asleep and not listening for acoustic packets it will respond to SerialCommands and wakeup.
 
-ReceiveChannelStatus covers the simulated front end acoustic receiver of the Modem:
-+ Silent - Only ambient noise is being received by the front end.
-+ SinglePacketArrival - A single acoustic transmission is currently arriving at the front end. The Modem is likely to be in Receiving state now.
-+ OverlappedPacketArrival - More than one acoustic transmission is currently arriving at the front end. For now this will result in both acoustic packets counting as failed.
+ReceiverStatus covers the simulated front end acoustic receiver of the Modem:
++ Quiet - Only ambient noise is being received by the front end.
++ SingleArrival - A single acoustic transmission is currently arriving at the front end. The Modem is likely to be in Receiving state now.
++ OverlappedArrival - More than one acoustic transmission is currently arriving at the front end. For now this will result in both acoustic packets counting as failed.
 + Saturated - A transmission is currently ongoing so no incoming acoustic transmissions would be received by the front end.
 
 
