@@ -1,10 +1,21 @@
 # Source code
 
+
 ## Node
 + NodeBase class
 + NodePacket class
 
 The BaseNode is used at the controller, each has a unique id and holds a 3d position in the virtual sea. Changes to the position at the clients result in NodePackets being sent to the simulation controller. These positions are then used by the controller to determine propagation delay and transmission losses. Visualisations use the published positions as centre points for displaying the outward propagating acoustic signals.  
+
+
+## Controller
++ NodeBase class
++ NodePacket class
++ TimePacket class
++ AcousticPacket class
++ PropagationModelBase class
+
+Each client connects to the Controller, network latency is measured using TimePackets after which the client provides its position with a NodePacket. Modems send AcousticPackets to the Controller. The Controller uses the 3d positions to calculate propagation delay and packet success probabilities before determining if and when to schedule an AcousticPacket transmission to the other node clients. This will need to be changed to allow the Modem to receive colliding packets and determine probability of success itself. Fields to be added to the AcousticPacket will include Received SNR/SPL, and a precalculated default probability of success (assuming no collision). Other fields will include the frequency band as well as transmit duration such that a Hydrophone client can construct a rudimentary spectrogram visualisation. 
 
 
 ## Modem
