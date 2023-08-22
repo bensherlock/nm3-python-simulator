@@ -33,6 +33,7 @@ import math
 from .node_base import NodeBase
 from .acoustic_packet import AcousticPacket
 
+
 class PropagationModelBase:
     """Propagation Model for packet transmission between two nodes.
     Extend this class and provide to the Controller."""
@@ -42,6 +43,12 @@ class PropagationModelBase:
                               acoustic_packet: AcousticPacket = None):
         """Calculate the propagation delay of acoustic packet from source to destination node.
         Returns propagation_delay and probability. (probability will always be 1.0)."""
+
+        # TODO: This needs to change such that the probability is calculated by the receiving modem.
+        #       Propagation model will provide propagation delay, and using the Source Level, band,
+        #       and ambient noise will calculate the receive SNR based on transmission losses and noise.
+        #       The controller will always forward on an acoustic packet to the modem/hydrophone node.
+        #       The receive SNR will be updated in the provided AcousticPacket.
 
         x0 = source_node.position_xy[0]
         y0 = source_node.position_xy[1]
@@ -55,13 +62,12 @@ class PropagationModelBase:
         # Assuming no losses. And isovelocity. And no obstructions. And no multipath. And no noise.
         # The joy of simulation.
 
-        straight_line_range = math.sqrt(
-            ((x1 - x0) * (x1 - x0)) + ((y1 - y0) * (y1 - y0)) + ((z1 - z0) * (z1 - z0)))
+        straight_line_range = math.sqrt(((x1 - x0) * (x1 - x0))
+                                        + ((y1 - y0) * (y1 - y0))
+                                        + ((z1 - z0) * (z1 - z0)))
         speed_of_sound = 1500.0
         #print("straight_line_range=" + str(straight_line_range))
         propagation_delay = straight_line_range / speed_of_sound
         #print("propagation_delay=" + str(propagation_delay))
 
-        probability = 1.0
-
-        return propagation_delay, probability
+        return propagation_delay

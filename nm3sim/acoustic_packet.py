@@ -57,10 +57,19 @@ class AcousticPacket:
         self._payload_bytes = payload_bytes
         self._hamr_timestamp = hamr_timestamp
 
+        # Source Level (dB re 1uPa @ 1m) is provided by the transmitting modem
         self._source_level = source_level
-        # Source Level
-        # Speed of Sound
 
+        # Band (Hz)
+        self._band_start = 24000
+        self._band_stop = 32000
+
+        # Receive SNR (dB) is updated by the controller based on transmission losses and ambient noise levels
+        # Used by the receiving modem (hardware or software receiver) to determine probability of packet success.
+        self._receive_snr = 20.0
+
+        # Transmit Duration is the acoustic duration of the packet.
+        # This determines the time spent in Transmit state and in Receive state
         self._transmit_duration = self.calculate_transmit_duration()
 
         # Lookup tables here based on varying data payload lengths and varying multipath severity.
@@ -182,9 +191,44 @@ class AcousticPacket:
         self._hamr_timestamp = hamr_timestamp
 
     @property
+    def band_start(self) -> float:
+        return self._band_start
+
+    @band_start.setter
+    def band_start(self, band_start: float):
+        self._band_start = band_start
+
+    @property
+    def band_stop(self) -> float:
+        return self._band_stop
+
+    @band_stop.setter
+    def band_stop(self, band_stop: float):
+        self._band_stop = band_stop
+
+    @property
+    def band_centre(self) -> float:
+        return (self._band_start + self._band_stop) / 2.0
+
+    @property
+    def source_level(self) -> float:
+        return self._source_level
+
+    @source_level.setter
+    def source_level(self, source_level: float):
+        self._source_level = source_level
+
+    @property
+    def receive_snr(self) -> float:
+        return self._receive_snr
+
+    @receive_snr.setter
+    def receive_snr(self, receive_snr: float):
+        self._receive_snr = receive_snr
+
+    @property
     def transmit_duration(self) -> float:
         return self._transmit_duration
-
 
     def calculate_transmit_duration(self):
         """Calculate the packet transmit duration."""
@@ -194,7 +238,6 @@ class AcousticPacket:
             transmit_duration = 0.105 + ((self._payload_length + 16.0) * 2.0 * 50.0 / 8000.0)
 
         return transmit_duration
-
 
     def get_snr_to_per_table(self, multipath_level=2):
         """Get the lookup table of SNR and packet error rate"""
@@ -208,7 +251,7 @@ class AcousticPacket:
 
         return look_up_table
 
-    def calculate_probability_of_delivery(self, received_snr, multipath_level=2):
+    def calculate_probability_of_delivery(self, receive_snr, multipath_level=2):
         """Calculate the probability of delivery."""
 
         probability_of_delivery = 1.0
@@ -219,7 +262,7 @@ class AcousticPacket:
         # Search for packet error rate based on received SNR
         #
         # round SNR to nearest integer
-        rounded_snr = int(round(received_snr))
+        rounded_snr = int(round(receive_snr))
         if rounded_snr < look_up_table[0][0]:  # out of range?
             probability_of_delivery = 0.0
         elif rounded_snr > look_up_table[-1][0]:
@@ -231,7 +274,6 @@ class AcousticPacket:
             probability_of_delivery = 1.0 - per
 
         return probability_of_delivery
-
 
     def json(self):
         """Returns a json dictionary representation."""

@@ -79,9 +79,9 @@ class Controller:
         #self._socket_stream = None
         #self._socket_loop = None
 
-        self._nodes = {} # Map unique_id to node
+        self._nodes = {}  # Map unique_id to node
 
-        self._propagation_model = PropagationModelBase() # Default model
+        self._propagation_model = PropagationModelBase()  # Default model
 
         self._scheduled_network_packets = []
 
@@ -90,7 +90,6 @@ class Controller:
     def __call__(self):
         return self
 
-
     @property
     def propagation_model(self) -> PropagationModelBase:
         return self._propagation_model
@@ -98,7 +97,6 @@ class Controller:
     @propagation_model.setter
     def propagation_model(self, propagation_model: PropagationModelBase):
         self._propagation_model = propagation_model
-
 
     def get_hamr_time(self, local_time=None):
         """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
@@ -117,7 +115,6 @@ class Controller:
         else:
             return time.time()
 
-
     def add_node(self, unique_id):
         """Add a new NodeBase to the controller.
         Return the unique id for this node."""
@@ -132,7 +129,6 @@ class Controller:
     def delete_node(self, unique_id):
         """Delete the Node from the controller using the id."""
         self._nodes.pop(unique_id, None)
-
 
     def get_node(self, unique_id) \
             -> Union[NodeBase, None]:
@@ -162,10 +158,9 @@ class Controller:
                 acoustic_packet=acoustic_packet)
 
         # Fallback
-
         x0 = source_node.position_xy[0]
         y0 = source_node.position_xy[1]
-        z0  = source_node.depth
+        z0 = source_node.depth
 
         x1 = destination_node.position_xy[0]
         y1 = destination_node.position_xy[1]
@@ -175,19 +170,16 @@ class Controller:
         # Assuming no losses. And isovelocity. And no obstructions. And no multipath. And no noise.
         # The joy of simulation.
 
-        straight_line_range = math.sqrt(((x1-x0)*(x1-x0)) +  ((y1-y0)*(y1-y0)) + ((z1-z0)*(z1-z0)))
+        straight_line_range = math.sqrt(((x1-x0)*(x1-x0)) + ((y1-y0)*(y1-y0)) + ((z1-z0)*(z1-z0)))
         speed_of_sound = 1500.0
         propagation_delay = straight_line_range / speed_of_sound
 
         return propagation_delay, 1.0
 
-
-
     def schedule_network_packet(self, transmit_time, unique_id, network_packet_json_string):
         """Schedule a network packet transmission."""
         self._scheduled_network_packets.append( (transmit_time, unique_id, network_packet_json_string) )
         self._scheduled_network_packets.sort(key=lambda tup: tup[0]) # sort by time
-
 
     def next_scheduled_network_packet(self, current_time):
         """Get the next scheduled network packet to be transmitted at the current time."""
@@ -198,7 +190,6 @@ class Controller:
             return unique_id, network_packet_json_string, scheduled_network_packet
 
         return None, None, None
-
 
     def on_recv(self, msg):
         """Callback handler for on_recv."""
