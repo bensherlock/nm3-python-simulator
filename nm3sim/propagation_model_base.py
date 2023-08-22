@@ -42,14 +42,30 @@ class PropagationModelBase:
                               destination_node: NodeBase,
                               acoustic_packet: AcousticPacket = None):
         """Calculate the propagation delay of acoustic packet from source to destination node.
-        Returns propagation_delay and probability. (probability will always be 1.0)."""
+        Returns propagation_delay."""
 
-        # TODO: This needs to change such that the probability is calculated by the receiving modem.
-        #       Propagation model will provide propagation delay, and using the Source Level, band,
-        #       and ambient noise will calculate the receive SNR based on transmission losses and noise.
-        #       The controller will always forward on an acoustic packet to the modem/hydrophone node.
-        #       The receive SNR will be updated in the provided AcousticPacket.
+        speed_of_sound = 1500.0
+        propagation_delay = PropagationModelBase.calculate_straight_line_propagation_delay(source_node, destination_node, speed_of_sound)
 
+        return propagation_delay
+
+
+    @staticmethod
+    def calculate_straight_line_propagation_delay(source_node: NodeBase,
+                                                 destination_node: NodeBase, speed_of_sound: float):
+        """Helper function for child classes to calculate simple straigh tline propagation delay."""
+
+        straight_line_range = PropagationModelBase.calculate_straight_line_range(source_node, destination_node)
+
+        propagation_delay = straight_line_range / speed_of_sound
+
+        return propagation_delay
+
+
+    @staticmethod
+    def calculate_straight_line_range(source_node: NodeBase,
+                                     destination_node: NodeBase):
+        """Helper function for child classes to calculate simple straight line range."""
         x0 = source_node.position_xy[0]
         y0 = source_node.position_xy[1]
         z0 = source_node.depth
@@ -58,16 +74,8 @@ class PropagationModelBase:
         y1 = destination_node.position_xy[1]
         z1 = destination_node.depth
 
-        # Please note: This is a **very** simplistic model to just get us started.
-        # Assuming no losses. And isovelocity. And no obstructions. And no multipath. And no noise.
-        # The joy of simulation.
-
         straight_line_range = math.sqrt(((x1 - x0) * (x1 - x0))
                                         + ((y1 - y0) * (y1 - y0))
                                         + ((z1 - z0) * (z1 - z0)))
-        speed_of_sound = 1500.0
-        #print("straight_line_range=" + str(straight_line_range))
-        propagation_delay = straight_line_range / speed_of_sound
-        #print("propagation_delay=" + str(propagation_delay))
 
-        return propagation_delay
+        return straight_line_range

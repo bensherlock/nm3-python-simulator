@@ -211,6 +211,10 @@ class AcousticPacket:
         return (self._band_start + self._band_stop) / 2.0
 
     @property
+    def band_width(self) -> float:
+        return self._band_stop - self._band_start
+
+    @property
     def source_level(self) -> float:
         return self._source_level
 
