@@ -456,7 +456,19 @@ class Modem:
     def process_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Process an AcousticPacket."""
 
-        # Update receiver state and update start time.
+        # Update receiver state based on modem state. update start time.
+        if self._receiver_state == Modem.RECEIVER_STATE_QUIET:
+            # If Modem is listening then we can process, otherwise move to overlapped mode
+            pass
+        elif self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL:
+            # We now have an overlapped state - all packets lost
+            pass
+        elif self._receiver_state == Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL:
+            # We remain in an overlapped state - all packets lost
+            pass
+        elif self._receiver_state == Modem.RECEIVER_STATE_SATURATED:
+            # Overlapped mode after saturated
+            pass
 
 
         # Determine if this packet was received successfully
@@ -582,8 +594,10 @@ class Modem:
         """Process bytes in the state machine and act accordingly."""
         if not self._last_byte_time or (time.time() > (self._last_byte_time + Modem.BYTE_PARSER_TIMEOUT)):
             self._simulator_state = self.SIMULATOR_STATE_IDLE
+            self._modem_state = Modem.MODEM_STATE_LISTENING
 
         self._last_byte_time = time.time()
+        self._modem_state = Modem.MODEM_STATE_UARTING
 
         for b in some_bytes:
             if self._simulator_state == self.SIMULATOR_STATE_IDLE:
@@ -603,8 +617,10 @@ class Modem:
                         self._output_stream.write(response_bytes)
                         self._output_stream.flush()
 
+
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
+                    self._modem_state = Modem.MODEM_STATE_LISTENING
                 elif bytes([b]).decode('utf-8') == 'A':
                     # Set Address
                     self._current_byte_counter = 3
@@ -675,6 +691,7 @@ class Modem:
 
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
+                    self._modem_state = Modem.MODEM_STATE_LISTENING
 
             elif self._simulator_state == self.SIMULATOR_STATE_PING:
                 self._current_byte_counter = self._current_byte_counter - 1
@@ -692,6 +709,7 @@ class Modem:
                             response_bytes = response_str.encode('utf-8')
                             self._output_stream.write(response_bytes)
                             self._output_stream.flush()
+                            self._modem_state = Modem.MODEM_STATE_LISTENING
                         else:
                             # Immediate response
                             response_str = "$P" + "{:03d}".format(address_to_ping) + "\r\n"
@@ -710,6 +728,7 @@ class Modem:
                             self.send_acoustic_packet(acoustic_packet_to_send)
                             self._acoustic_ack_wait_address = address_to_ping
                             self._acoustic_state = self.ACOUSTIC_STATE_WAIT_ACK
+                            self._modem_state = Modem.MODEM_STATE_TRANSMITTING
 
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
@@ -730,6 +749,7 @@ class Modem:
                             response_bytes = response_str.encode('utf-8')
                             self._output_stream.write(response_bytes)
                             self._output_stream.flush()
+                            self._modem_state = Modem.MODEM_STATE_LISTENING
                         else:
                             # Immediate response
                             response_str = "$T" + "{:03d}".format(address_to_test) + "\r\n"
@@ -748,6 +768,7 @@ class Modem:
                             self.send_acoustic_packet(acoustic_packet_to_send)
 
                             self._acoustic_state = self.ACOUSTIC_STATE_IDLE
+                            self._modem_state = Modem.MODEM_STATE_TRANSMITTING
 
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
@@ -824,6 +845,7 @@ class Modem:
                             payload_bytes=self._message_bytes,
                             hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
                         self.send_acoustic_packet(acoustic_packet_to_send)
+                        self._modem_state = Modem.MODEM_STATE_TRANSMITTING
 
                         # If Ack
                         if self._message_type == 'M':
