@@ -42,6 +42,7 @@ from .acoustic_packet import AcousticPacket
 from .node_base import NodeBase
 from .node_packet import NodePacket
 from .propagation_model_base import PropagationModelBase
+from .propagation_model_simple import PropagationModelSimple
 from .time_packet import TimePacket
 
 
@@ -148,8 +149,8 @@ class Controller:
                               destination_node: NodeBase,
                               acoustic_packet: AcousticPacket):
         """Calculate the propagation delay of acoustic packet from source to destination node.
-        Uses the model provided by the user or a fallback isovelocity if model is None.
-        Returns propagation_delay and probability."""
+        Uses the model provided by the user.
+        Returns propagation_delay and updates the provided acoustic packet."""
 
         if self._propagation_model:
             return self._propagation_model.calculate_propagation(
@@ -157,24 +158,7 @@ class Controller:
                 destination_node=destination_node,
                 acoustic_packet=acoustic_packet)
 
-        # Fallback
-        x0 = source_node.position_xy[0]
-        y0 = source_node.position_xy[1]
-        z0 = source_node.depth
-
-        x1 = destination_node.position_xy[0]
-        y1 = destination_node.position_xy[1]
-        z1 = destination_node.depth
-
-        # Please note: This is a **very** simplistic model to just get us started.
-        # Assuming no losses. And isovelocity. And no obstructions. And no multipath. And no noise.
-        # The joy of simulation.
-
-        straight_line_range = math.sqrt(((x1-x0)*(x1-x0)) + ((y1-y0)*(y1-y0)) + ((z1-z0)*(z1-z0)))
-        speed_of_sound = 1500.0
-        propagation_delay = straight_line_range / speed_of_sound
-
-        return propagation_delay, 1.0
+        return 0.0
 
     def schedule_network_packet(self, transmit_time, unique_id, network_packet_json_string):
         """Schedule a network packet transmission."""
@@ -243,8 +227,7 @@ class Controller:
                 # Forward to loggers and visualisation clients
                 self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
 
-            # Send to all nodes, except this one
-            # For now this is instant: no propagation, or probability, or filtering.
+            # Send to all nodes, except the transmitting node
             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
             # Process Channels and Scheduling of acoustic_packet
             # This would need updating if the receiving node changes its position - work this out later.
@@ -260,29 +243,25 @@ class Controller:
                     # Get destination position Information
                     destination_node = self.get_node(socket_id)
 
+                    # Take a copy of the acoustic packet
+                    acoustic_packet_copy = copy.deepcopy(acoustic_packet)
+
                     # Calculate propagation
-                    acoustic_packet.hamr_timestamp = hamr_received_time
-                    propagation_delay, probability = self.calculate_propagation(
-                        source_node, destination_node,
-                    acoustic_packet)
+                    propagation_delay = self.calculate_propagation(source_node, destination_node, acoustic_packet_copy)
 
+                    # Calculate a transmit_time
+                    hamr_transmit_time = hamr_received_time + propagation_delay
+                    local_transmit_time = self.get_local_time(hamr_transmit_time)
 
-                    # Check probability
-                    if random.random() < probability:
-                        # Calculate a transmit_time
-                        hamr_transmit_time = hamr_received_time + propagation_delay
-                        local_transmit_time = self.get_local_time(hamr_transmit_time)
-
-                        acoustic_packet.hamr_timestamp = hamr_transmit_time
-                        new_network_message_jason = {"AcousticPacket": acoustic_packet.json()}
-                        new_network_message_json_str = json.dumps(new_network_message_jason)
-                        self.schedule_network_packet(local_transmit_time, socket_id,
-                                                     new_network_message_json_str)
-                        # IOLoop set the callback
-                        #IOLoop.instance().call_at(local_transmit_time, self.check_for_packets_to_send)
+                    acoustic_packet_copy.hamr_timestamp = hamr_transmit_time
+                    new_network_message_jason = {"AcousticPacket": acoustic_packet_copy.json()}
+                    new_network_message_json_str = json.dumps(new_network_message_jason)
+                    self.schedule_network_packet(local_transmit_time, socket_id,
+                                                 new_network_message_json_str)
+                    # IOLoop set the callback
+                    #IOLoop.instance().call_at(local_transmit_time, self.check_for_packets_to_send)
             #for s in self._scheduled_network_packets:
             #    print(s)
-
 
 
     def check_for_packets_to_send(self):
@@ -412,7 +391,7 @@ def main():
     controller = Controller(
         network_address=network_address, network_port=network_port, publish_port=publish_port)
 
-    propagation_model = PropagationModelBase()
+    propagation_model = PropagationModelSimple()
     controller.propagation_model = propagation_model
 
     controller.start()

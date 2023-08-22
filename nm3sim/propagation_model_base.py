@@ -53,7 +53,7 @@ class PropagationModelBase:
     @staticmethod
     def calculate_straight_line_propagation_delay(source_node: NodeBase,
                                                  destination_node: NodeBase, speed_of_sound: float):
-        """Helper function for child classes to calculate simple straigh tline propagation delay."""
+        """Helper function for child classes to calculate simple straight line propagation delay."""
 
         straight_line_range = PropagationModelBase.calculate_straight_line_range(source_node, destination_node)
 

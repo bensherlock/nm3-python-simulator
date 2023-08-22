@@ -83,9 +83,11 @@ class PropagationModelSimple(PropagationModelBase):
 
     def calculate_transmission_loss(self, straight_line_range):
         """Calculate Transmissions loss (dB) from spreading and attenuation."""
+        transmission_loss = 0.0
 
-        # calculate transmission loss (free field spreading) TL
-        transmission_loss = 20.0 * math.log10(straight_line_range) \
-                            + self._attenuation_alpha * straight_line_range * 0.001
+        if straight_line_range > 0.0:
+            # calculate transmission loss (free field spreading) TL
+            transmission_loss = 20.0 * math.log10(straight_line_range) \
+                                + self._attenuation_alpha * straight_line_range * 0.001
 
         return transmission_loss

@@ -35,6 +35,7 @@ from .time_packet import TimePacket
 
 import json
 import os
+import random
 import time
 import zmq
 
@@ -167,6 +168,76 @@ class Modem:
         self._last_packet_received_time = None
         self._last_packet_sent_time = None
 
+        # Receiver Performance to determine packet success probability
+        # Lookup tables here based on varying data payload lengths and varying multipath severity.
+        # Check curves in paper - Fig. 12.
+        # Tables generated for the paper: 20190827-nm3paperdata.git 03-nm3packetsim\results
+        # Anything below -9dB is lost, anything above 9dB is 100% successful.
+        # Everything else is within the lookup table.
+        # Multipath configurations (1,1,0) is a harsh multipath scenario.
+        # (1,0,0) is less so. (0,0,0) is just AWGN.
+        # Multipath level - 0=(0,0,0)/AWGN, 1=(1,0,0), 2=(1,1,0)
+        self._snr_vs_per_results = [
+            (0, [
+                (4, [(-9, 0.919), (-8, 0.736), (-7, 0.465), (-6, 0.236), (-5, 0.076),
+                     (-4, 0.012), (-3, 0.000), (-2, 0.000), (-1, 0.000), (0, 0.000),
+                     (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                     (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L4 (0,0,0)
+                (8, [(-9, 0.946), (-8, 0.732), (-7, 0.484), (-6, 0.234), (-5, 0.074),
+                     (-4, 0.013), (-3, 0.002), (-2, 0.000), (-1, 0.000), (0, 0.000),
+                     (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                     (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L8 (0,0,0)
+                (16, [(-9, 0.984), (-8, 0.777), (-7, 0.482), (-6, 0.225), (-5, 0.070),
+                      (-4, 0.017), (-3, 0.001), (-2, 0.000), (-1, 0.000), (0, 0.000),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L16 (0,0,0)
+                (32, [(-9, 1.000), (-8, 0.910), (-7, 0.469), (-6, 0.228), (-5, 0.074),
+                      (-4, 0.011), (-3, 0.000), (-2, 0.000), (-1, 0.000), (0, 0.000),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L32 (0,0,0)
+                (64, [(-9, 1.000), (-8, 0.997), (-7, 0.644), (-6, 0.221), (-5, 0.066),
+                      (-4, 0.011), (-3, 0.001), (-2, 0.000), (-1, 0.000), (0, 0.000),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L64 (0,0,0)
+            ]),  # Multpath Level 0 (0,0,0) AWGN
+            (1, [
+                (4, [(-9, 1.000), (-8, 1.000), (-7, 0.998), (-6, 0.960), (-5, 0.776),
+                     (-4, 0.434), (-3, 0.200), (-2, 0.062), (-1, 0.013), (0, 0.001),
+                     (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                     (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L4 (1,0,0)
+                (8, [(-9, 1.000), (-8, 1.000), (-7, 0.999), (-6, 0.981), (-5, 0.816),
+                     (-4, 0.456), (-3, 0.194), (-2, 0.062), (-1, 0.011), (0, 0.001),
+                     (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                     (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L8 (1,0,0)
+                (16, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 0.998), (-5, 0.944),
+                      (-4, 0.605), (-3, 0.228), (-2, 0.061), (-1, 0.011), (0, 0.001),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L16 (1,0,0)
+                (32, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 1.000), (-5, 0.998),
+                      (-4, 0.897), (-3, 0.388), (-2, 0.080), (-1, 0.013), (0, 0.002),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L32 (1,0,0)
+                (64, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 1.000), (-5, 1.000),
+                      (-4, 0.998), (-3, 0.856), (-2, 0.270), (-1, 0.024), (0, 0.001),
+                      (1, 0.000), (2, 0.000), (3, 0.000), (4, 0.000), (5, 0.000),
+                      (6, 0.000), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L64 (1,0,0)
+            ]),  # Multpath Level 1 (1,0,0)
+            (2, [
+                (16, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 1.000), (-5, 1.000),
+                      (-4, 0.998), (-3, 0.944), (-2, 0.717), (-1, 0.412), (0, 0.161),
+                      (1, 0.047), (2, 0.015), (3, 0.006), (4, 0.003), (5, 0.001),
+                      (6, 0.001), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L16 (1,1,0)
+                (32, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 1.000), (-5, 1.000),
+                      (-4, 1.000), (-3, 0.997), (-2, 0.952), (-1, 0.804), (0, 0.553),
+                      (1, 0.245), (2, 0.089), (3, 0.020), (4, 0.010), (5, 0.003),
+                      (6, 0.001), (7, 0.000), (8, 0.000), (9, 0.000)]),  # L32 (1,1,0)
+                (64, [(-9, 1.000), (-8, 1.000), (-7, 1.000), (-6, 1.000), (-5, 1.000),
+                      (-4, 1.000), (-3, 1.000), (-2, 0.999), (-1, 0.984), (0, 0.932),
+                      (1, 0.793), (2, 0.483), (3, 0.217), (4, 0.068), (5, 0.020),
+                      (6, 0.007), (7, 0.002), (8, 0.002), (9, 0.000)])  # L64 (1,1,0)
+            ])  # Multipath Level 2 (1,1,0)
+        ]  # SNR vs PER Lookup Table
+
     def __call__(self):
         return self
 
@@ -213,6 +284,43 @@ class Modem:
             return local_time
         else:
             return time.time()
+
+
+    def get_snr_to_per_table(self, payload_length, multipath_level=2):
+        """Get the lookup table of SNR and packet error rate"""
+        # Find nearest data_bytes value equal or greater in the lookup tables for given multipath.
+        look_up_table = []
+        for lut in self._snr_vs_per_results[multipath_level][1]:
+            if payload_length <= lut[0]:
+                # This one.
+                look_up_table = lut[1]
+                break
+
+        return look_up_table
+
+    def calculate_probability_of_delivery(self, receive_snr, payload_length, multipath_level=2):
+        """Calculate the probability of delivery."""
+
+        probability_of_delivery = 1.0
+
+        # Find nearest data_bytes value equal or greater in the lookup tables for given multipath.
+        look_up_table = self.get_snr_to_per_table(payload_length, multipath_level)
+
+        # Search for packet error rate based on received SNR
+        #
+        # round SNR to nearest integer
+        rounded_snr = int(round(receive_snr))
+        if rounded_snr < look_up_table[0][0]:  # out of range?
+            probability_of_delivery = 0.0
+        elif rounded_snr > look_up_table[-1][0]:
+            probability_of_delivery = 1.0  # short range?
+        else:
+            # read PER from table and convert to Pd
+            start_snr = look_up_table[0][0]
+            per = look_up_table[rounded_snr - start_snr][1]
+            probability_of_delivery = 1.0 - per
+
+        return probability_of_delivery
 
     def run(self):
         """Run the simulator. Never returns."""
@@ -347,113 +455,127 @@ class Modem:
 
     def process_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Process an AcousticPacket."""
-        # State
-        if self._acoustic_state == self.ACOUSTIC_STATE_WAIT_ACK:
-            # Check for DownChirp on the acoustic_packet - ignore if not downchip.
-            if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_DN:
-                # Ack Received
-                if acoustic_packet.address == self._acoustic_ack_wait_address:
-                    # This is the Ack we are looking for.
-                    if self._output_stream and self._output_stream.writable():
-                        local_received_time = self.get_local_time(acoustic_packet.hamr_timestamp)
-                        delay_time = local_received_time - self._acoustic_ack_wait_time
-                        _debug_print("Ack delay_time: " + str(delay_time))
-                        timeval = int(delay_time * 16000.0)
-                        response_str = "#R" + "{:03d}".format(
-                            acoustic_packet.address) + "T" + "{:05d}".format(timeval) + "\r\n"
-                        response_bytes = response_str.encode('utf-8')
-                        self._output_stream.write(response_bytes)
-                        self._output_stream.flush()
 
-                    self._acoustic_state = self.ACOUSTIC_STATE_IDLE
+        # Update receiver state and update start time.
+
+
+        # Determine if this packet was received successfully
+        probability_of_delivery = self.calculate_probability_of_delivery(acoustic_packet.receive_snr, acoustic_packet.payload_length)
+        _debug_print("receive_snr=" + str(acoustic_packet.receive_snr))
+        _debug_print("probability_of_delivery=" + str(probability_of_delivery))
+        # Check probability
+        if random.random() < probability_of_delivery:
+            # Received successfully
+
+            # State
+            if self._acoustic_state == self.ACOUSTIC_STATE_WAIT_ACK:
+                # Check for DownChirp on the acoustic_packet - ignore if not downchip.
+                if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_DN:
+                    # Ack Received
+                    if acoustic_packet.address == self._acoustic_ack_wait_address:
+                        # This is the Ack we are looking for.
+                        if self._output_stream and self._output_stream.writable():
+                            local_received_time = self.get_local_time(acoustic_packet.hamr_timestamp)
+                            delay_time = local_received_time - self._acoustic_ack_wait_time
+                            _debug_print("Ack delay_time: " + str(delay_time))
+                            timeval = int(delay_time * 16000.0)
+                            response_str = "#R" + "{:03d}".format(
+                                acoustic_packet.address) + "T" + "{:05d}".format(timeval) + "\r\n"
+                            response_bytes = response_str.encode('utf-8')
+                            self._output_stream.write(response_bytes)
+                            self._output_stream.flush()
+
+                        self._acoustic_state = self.ACOUSTIC_STATE_IDLE
+            else:
+                # Check for UpChirp on the acoustic_packet - ignore if not upchirp.
+                if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_UP:
+                    if acoustic_packet.payload_length == 0 and acoustic_packet.address == self._local_address:
+                        # Control commands
+                        # CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
+                        if acoustic_packet.command == AcousticPacket.CMD_PING_REQ:
+                            # Ping request so send a reply
+                            acoustic_packet_to_send = AcousticPacket(
+                                frame_synch=AcousticPacket.FRAMESYNCH_DN,
+                                address=self._local_address,
+                                command=AcousticPacket.CMD_PING_REP,
+                                hamr_timestamp=acoustic_packet.hamr_timestamp)
+                            self.send_acoustic_packet(acoustic_packet_to_send)
+
+                        elif acoustic_packet.command == AcousticPacket.CMD_TEST_REQ:
+                            # Test message acoustic message as a broadcast
+                            payload_str = "This is a test message from a Virtual NM3"
+                            payload_bytes = list(payload_str.encode('utf-8'))
+
+                            acoustic_packet_to_send = AcousticPacket(
+                                frame_synch=AcousticPacket.FRAMESYNCH_UP,
+                                address=self._local_address,
+                                command=AcousticPacket.CMD_BROADCAST_MSG,
+                                payload_length=len(payload_bytes),
+                                payload_bytes=payload_bytes,
+                                hamr_timestamp=self.get_hamr_time())
+                            self.send_acoustic_packet(acoustic_packet_to_send)
+
+                        # Other commands not supported at the moment.
+
+                    else:
+                        # Message Packets
+                        # CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
+                        if acoustic_packet.command == AcousticPacket.CMD_UNICAST_MSG and acoustic_packet.address == self._local_address:
+                            # Construct the bytes to be sent to the output_stream
+                            # "#U..."
+                            if self._output_stream and self._output_stream.writable():
+                                response_bytes = b"#U" \
+                                                 + "{:02d}".format(
+                                    acoustic_packet.payload_length).encode('utf-8') \
+                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
+                                self._output_stream.write(response_bytes)
+                                self._output_stream.flush()
+
+                        elif acoustic_packet.command == AcousticPacket.CMD_BROADCAST_MSG:
+                            # Construct the bytes to be sent to the output_stream
+                            # "#B..."
+                            if self._output_stream and self._output_stream.writable():
+                                response_bytes = b"#B" \
+                                                 + "{:03d}".format(
+                                    acoustic_packet.address).encode('utf-8') \
+                                                 + "{:02d}".format(
+                                    acoustic_packet.payload_length).encode('utf-8') \
+                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
+                                self._output_stream.write(response_bytes)
+                                self._output_stream.flush()
+
+                        elif acoustic_packet.command == AcousticPacket.CMD_UNICAST_ACK_MSG and acoustic_packet.address == self._local_address:
+                            # Ack request so send a reply
+                            acoustic_packet_to_send = AcousticPacket(
+                                frame_synch=AcousticPacket.FRAMESYNCH_DN,
+                                address=self._local_address,
+                                command=AcousticPacket.CMD_PING_REP,
+                                hamr_timestamp=acoustic_packet.hamr_timestamp)
+                            self.send_acoustic_packet(acoustic_packet_to_send)
+
+                            # Construct the bytes to be sent to the output_stream
+                            # "#U..."
+                            if self._output_stream and self._output_stream.writable():
+                                response_bytes = b"#U" \
+                                                 + "{:02d}".format(
+                                    acoustic_packet.payload_length).encode('utf-8') \
+                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
+                                self._output_stream.write(response_bytes)
+                                self._output_stream.flush()
+
+                        elif acoustic_packet.command == AcousticPacket.CMD_ECHO_MSG and acoustic_packet.address == self._local_address:
+                            # Echo the acoustic message as a broadcast
+                            acoustic_packet_to_send = AcousticPacket(
+                                frame_synch=AcousticPacket.FRAMESYNCH_UP,
+                                address=self._local_address,
+                                command=AcousticPacket.CMD_BROADCAST_MSG,
+                                payload_length=acoustic_packet.payload_length,
+                                payload_bytes=acoustic_packet.payload_bytes,
+                                hamr_timestamp=self.get_hamr_time())
+                            self.send_acoustic_packet(acoustic_packet_to_send)
         else:
-            # Check for UpChirp on the acoustic_packet - ignore if not upchirp.
-            if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_UP:
-                if acoustic_packet.payload_length == 0 and acoustic_packet.address == self._local_address:
-                    # Control commands
-                    # CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
-                    if acoustic_packet.command == AcousticPacket.CMD_PING_REQ:
-                        # Ping request so send a reply
-                        acoustic_packet_to_send = AcousticPacket(
-                            frame_synch=AcousticPacket.FRAMESYNCH_DN,
-                            address=self._local_address,
-                            command=AcousticPacket.CMD_PING_REP,
-                            hamr_timestamp=acoustic_packet.hamr_timestamp)
-                        self.send_acoustic_packet(acoustic_packet_to_send)
-
-                    elif acoustic_packet.command == AcousticPacket.CMD_TEST_REQ:
-                        # Test message acoustic message as a broadcast
-                        payload_str = "This is a test message from a Virtual NM3"
-                        payload_bytes = list(payload_str.encode('utf-8'))
-
-                        acoustic_packet_to_send = AcousticPacket(
-                            frame_synch=AcousticPacket.FRAMESYNCH_UP,
-                            address=self._local_address,
-                            command=AcousticPacket.CMD_BROADCAST_MSG,
-                            payload_length=len(payload_bytes),
-                            payload_bytes=payload_bytes,
-                            hamr_timestamp=self.get_hamr_time())
-                        self.send_acoustic_packet(acoustic_packet_to_send)
-
-                    # Other commands not supported at the moment.
-
-                else:
-                    # Message Packets
-                    # CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
-                    if acoustic_packet.command == AcousticPacket.CMD_UNICAST_MSG and acoustic_packet.address == self._local_address:
-                        # Construct the bytes to be sent to the output_stream
-                        # "#U..."
-                        if self._output_stream and self._output_stream.writable():
-                            response_bytes = b"#U" \
-                                             + "{:02d}".format(
-                                acoustic_packet.payload_length).encode('utf-8') \
-                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                            self._output_stream.write(response_bytes)
-                            self._output_stream.flush()
-
-                    elif acoustic_packet.command == AcousticPacket.CMD_BROADCAST_MSG:
-                        # Construct the bytes to be sent to the output_stream
-                        # "#B..."
-                        if self._output_stream and self._output_stream.writable():
-                            response_bytes = b"#B" \
-                                             + "{:03d}".format(
-                                acoustic_packet.address).encode('utf-8') \
-                                             + "{:02d}".format(
-                                acoustic_packet.payload_length).encode('utf-8') \
-                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                            self._output_stream.write(response_bytes)
-                            self._output_stream.flush()
-
-                    elif acoustic_packet.command == AcousticPacket.CMD_UNICAST_ACK_MSG and acoustic_packet.address == self._local_address:
-                        # Ack request so send a reply
-                        acoustic_packet_to_send = AcousticPacket(
-                            frame_synch=AcousticPacket.FRAMESYNCH_DN,
-                            address=self._local_address,
-                            command=AcousticPacket.CMD_PING_REP,
-                            hamr_timestamp=acoustic_packet.hamr_timestamp)
-                        self.send_acoustic_packet(acoustic_packet_to_send)
-
-                        # Construct the bytes to be sent to the output_stream
-                        # "#U..."
-                        if self._output_stream and self._output_stream.writable():
-                            response_bytes = b"#U" \
-                                             + "{:02d}".format(
-                                acoustic_packet.payload_length).encode('utf-8') \
-                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                            self._output_stream.write(response_bytes)
-                            self._output_stream.flush()
-
-                    elif acoustic_packet.command == AcousticPacket.CMD_ECHO_MSG and acoustic_packet.address == self._local_address:
-                        # Echo the acoustic message as a broadcast
-                        acoustic_packet_to_send = AcousticPacket(
-                            frame_synch=AcousticPacket.FRAMESYNCH_UP,
-                            address=self._local_address,
-                            command=AcousticPacket.CMD_BROADCAST_MSG,
-                            payload_length=acoustic_packet.payload_length,
-                            payload_bytes=acoustic_packet.payload_bytes,
-                            hamr_timestamp=self.get_hamr_time())
-                        self.send_acoustic_packet(acoustic_packet_to_send)
-
+            # Packet lost - log and provide message to controller for logging
+            pass
 
 
     def process_bytes(self, some_bytes: bytes):
