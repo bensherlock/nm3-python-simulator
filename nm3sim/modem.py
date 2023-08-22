@@ -168,6 +168,9 @@ class Modem:
         self._last_packet_received_time = None
         self._last_packet_sent_time = None
 
+        # Receiver
+        self._current_receiving_acoustic_packet = None
+
         # Receiver Performance to determine packet success probability
         # Lookup tables here based on varying data payload lengths and varying multipath severity.
         # Check curves in paper - Fig. 12.
@@ -394,7 +397,16 @@ class Modem:
                         if "AcousticPacket" in network_message_jason:
                             # Process the AcousticPacket
                             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
-                            self.process_acoustic_packet(acoustic_packet)
+                            self._current_receiving_acoustic_packet = acoustic_packet
+                            if self._receiver_state == Modem.RECEIVER_STATE_QUIET and self._modem_state == Modem.MODEM_STATE_LISTENING:
+                                self._receiver_state = Modem.RECEIVER_STATE_SINGLE_ARRIVAL
+                                self._modem_state = Modem.MODEM_STATE_RECEIVING
+                            else:
+                                # even if we drop back to listening we have missed the synch
+                                self._receiver_state = Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL
+
+
+                            #self.process_acoustic_packet(acoustic_packet)
 
                     except zmq.ZMQError:
                         more_messages = False
@@ -413,6 +425,20 @@ class Modem:
                         self._output_stream.write(response_bytes)
                         self._output_stream.flush()
 
+
+            # Check modem state and update
+            if self._modem_state == Modem.MODEM_STATE_LISTENING:
+                # Carry on
+                pass
+            elif self._modem_state == Modem.MODEM_STATE_RECEIVING:
+                # When did we start receiving? How long left? And we need to pass the packet to be processed.
+                pass
+            elif self._modem_state == Modem.MODEM_STATE_UARTING:
+                pass
+            elif self._modem_state == Modem.MODEM_STATE_TRANSMITTING:
+                pass
+            elif self._modem_state == Modem.MODEM_STATE_SLEEPING:
+                pass
 
 
     def send_time_packet(self):
