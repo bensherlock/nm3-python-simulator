@@ -49,7 +49,7 @@ class AcousticPacket:
     CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
 
     def __init__(self, frame_synch=FRAMESYNCH_UP, address=255, command=CMD_PING_REQ, payload_length=0, payload_bytes=None, hamr_timestamp=0.0,
-                 source_level=168.0, band_start=24000.0, band_stop=32000.0, receive_snr=20.0):
+                 source_level=168.0, band_start=24000.0, band_stop=32000.0, receive_snr=20.0, receive_sound_pressure_level=168.0):
         #AcousticPacket: { FrameSynch: Up/Dn, Address: 0-255, Command: 0-3, PayloadLength: 0-64, PayloadBytes: bytes(0-64) }
         self._frame_synch = frame_synch
         self._address = address
@@ -68,6 +68,11 @@ class AcousticPacket:
         # Receive SNR (dB) is updated by the controller based on transmission losses and ambient noise levels
         # Used by the receiving modem (hardware or software receiver) to determine probability of packet success.
         self._receive_snr = receive_snr
+
+        # Receive Sound Pressure Level (SPL) (dB re 1uPa) this is the acoustic transmission after losses as arriving
+        # at the receiver. This is isolated from ambient noises and other arrivals. Used by "Hydrophones" and more
+        # complex simulations of the modem receiver.
+        self._receive_sound_pressure_level = receive_sound_pressure_level
 
         # Transmit Duration is the acoustic duration of the packet.
         # This determines the time spent in Transmit state and in Receive state
@@ -164,6 +169,16 @@ class AcousticPacket:
         self._receive_snr = receive_snr
 
     @property
+    def receive_sound_pressure_level(self) -> float:
+        return self._receive_sound_pressure_level
+
+    @receive_sound_pressure_level.setter
+    def receive_sound_pressure_level(self, receive_sound_pressure_level: float):
+        self._receive_sound_pressure_level = receive_sound_pressure_level
+
+
+    
+    @property
     def transmit_duration(self) -> float:
         return self._transmit_duration
 
@@ -187,7 +202,8 @@ class AcousticPacket:
                  "SourceLevel": self.source_level,
                  "BandStart": self.band_start,
                  "BandStop": self.band_stop,
-                 "ReceiveSnr": self.receive_snr}
+                 "ReceiveSnr": self.receive_snr,
+                 "ReceiveSpl": self.receive_sound_pressure_level}
 
         return jason
 
@@ -202,5 +218,6 @@ class AcousticPacket:
                                          source_level=jason["SourceLevel"],
                                          band_start=jason["BandStart"],
                                          band_stop=jason["BandStop"],
-                                         receive_snr=jason["ReceiveSnr"])
+                                         receive_snr=jason["ReceiveSnr"],
+                                         receive_sound_pressure_level=jason["ReceiveSpl"])
         return acoustic_packet

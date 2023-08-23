@@ -75,9 +75,11 @@ class PropagationModelSimple(PropagationModelBase):
 
             # calculate receive SNR based on source level and the transmission and noise losses
             receive_snr = acoustic_packet.source_level - (transmission_loss + noise_loss)
+            receive_sound_pressure_level = acoustic_packet.source_level - transmission_loss
 
             # update the acoustic packet (this should be a copy rather than a single packet as it will be modified for each channel)
             acoustic_packet.receive_snr = receive_snr
+            acoustic_packet.receive_sound_pressure_level = receive_sound_pressure_level
 
         return propagation_delay
 
