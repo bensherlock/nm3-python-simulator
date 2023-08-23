@@ -95,15 +95,18 @@ class Modem:
     MODEM_STATES = (MODEM_STATE_LISTENING, MODEM_STATE_RECEIVING, MODEM_STATE_TRANSMITTING,
                     MODEM_STATE_UARTING, MODEM_STATE_SLEEPING)
 
-    MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_COMPLETE = range(3)
+    MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_START, \
+        MODEM_EVENT_TRANSMIT_COMPLETE = range(4)
 
     MODEM_EVENT_NAMES = {
         MODEM_EVENT_RECEIVE_SUCCESS: 'Receive Success',
         MODEM_EVENT_RECEIVE_FAIL: 'Receive Fail',
+        MODEM_EVENT_TRANSMIT_START: 'Transmit Start',
         MODEM_EVENT_TRANSMIT_COMPLETE: 'Transmit Complete'
     }
 
-    MODEM_EVENTS = (MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_COMPLETE)
+    MODEM_EVENTS = (MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL,
+                    MODEM_EVENT_TRANSMIT_START, MODEM_EVENT_TRANSMIT_COMPLETE)
 
     RECEIVER_STATE_QUIET, RECEIVER_STATE_SINGLE_ARRIVAL, RECEIVER_STATE_OVERLAPPED_ARRIVAL,\
         RECEIVER_STATE_SATURATED = range(4)
@@ -168,8 +171,11 @@ class Modem:
         self._last_packet_received_time = None
         self._last_packet_sent_time = None
 
+        # Transmitter
+        self._transmitting_acoustic_packet = None  # The current outgoing acoustic packet
+
         # Receiver
-        self._current_receiving_acoustic_packet = None
+        self._arriving_acoustic_packets = []
 
         # Receiver Performance to determine packet success probability
         # Lookup tables here based on varying data payload lengths and varying multipath severity.
@@ -345,13 +351,15 @@ class Modem:
             self._socket_poller.register(self._socket, zmq.POLLIN)
             self.send_time_packet()
 
-        while True:
+        while True:  # Main Loop
+            # 1. Node Position
             if self._position_information_updated:
                 # Send positional information update
                 self._position_information_updated = False
                 node_packet = NodePacket(position_xy=self._position_xy, depth=self._depth, label=self._label)
                 self.send_node_packet(node_packet)
 
+            # 2. Serial Port
             if self._input_stream and self._input_stream.readable():
                 #_debug_print("Checking input_stream")
                 some_bytes = self._input_stream.read()  # Read
@@ -366,6 +374,7 @@ class Modem:
 
             # Poll the socket for incoming "acoustic" messages
             #_debug_print("Checking socket poller")
+            # 3. Incoming Socket Messages
             sockets = dict(self._socket_poller.poll(1))
             if self._socket in sockets:
                 more_messages = True
@@ -383,6 +392,7 @@ class Modem:
 
                         _debug_print("Network Packet received: " + network_message_json_str)
 
+                        # Update Time Offsets
                         if "TimePacket" in network_message_jason:
                             # Process the TimePacket
                             time_packet = TimePacket.from_json(network_message_jason["TimePacket"])
@@ -394,16 +404,20 @@ class Modem:
 
                             print("TimePacket offset: " + str(self._hamr_time_offset))
 
+                        # Acoustic Packet - Queue up for processing
                         if "AcousticPacket" in network_message_jason:
-                            # Process the AcousticPacket
+                            # Queue up the AcousticPacket
                             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
-                            self._current_receiving_acoustic_packet = acoustic_packet
-                            if self._receiver_state == Modem.RECEIVER_STATE_QUIET and self._modem_state == Modem.MODEM_STATE_LISTENING:
+                            self._arriving_acoustic_packets.append(acoustic_packet)
+                            if self._receiver_state == Modem.RECEIVER_STATE_QUIET:
+                                # Single arrival
                                 self._receiver_state = Modem.RECEIVER_STATE_SINGLE_ARRIVAL
-                                self._modem_state = Modem.MODEM_STATE_RECEIVING
-                            else:
-                                # even if we drop back to listening we have missed the synch
+                            elif self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL:
+                                # Collision
                                 self._receiver_state = Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL
+                            else:
+                                #  already a collision or is transmitting
+                                pass
 
 
                             #self.process_acoustic_packet(acoustic_packet)
@@ -411,7 +425,60 @@ class Modem:
                     except zmq.ZMQError:
                         more_messages = False
 
-            # Check for timeout if awaiting an Ack
+            # Process Outgoing Acoustic Packet
+            if self._transmitting_acoustic_packet:
+                # Are we still transmitting
+                if self._transmitting_acoustic_packet.hamr_timestamp + \
+                        self._transmitting_acoustic_packet.transmit_duration >= self.get_hamr_time():
+                    # Transmission complete
+                    self._transmitting_acoustic_packet = None
+                    # Return to listening
+                    self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_TRANSMIT_COMPLETE)
+
+                    if self._arriving_acoustic_packets:
+                        # Then these overlapped with the transmission
+                        self._receiver_state = Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL
+                else:
+                    # Continue transmitting
+                    self._receiver_state = Modem.RECEIVER_STATE_SATURATED
+                    pass
+
+            # Process Arriving Acoustic Packets
+            if self._arriving_acoustic_packets:
+
+                if self._arriving_acoustic_packets[0].hamr_timestamp + \
+                        self._arriving_acoustic_packets[0].transmit_duration >= self.get_hamr_time():
+                    # Packet has now completed arriving
+                    acoustic_packet = self._arriving_acoustic_packets.pop(0)
+
+                    probability_of_delivery = self.calculate_probability_of_delivery(acoustic_packet.receive_snr,
+                                                                                     acoustic_packet.payload_length)
+                    _debug_print("receive_snr=" + str(acoustic_packet.receive_snr))
+                    _debug_print("probability_of_delivery=" + str(probability_of_delivery))
+
+                    if self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL \
+                            and self._modem_state == Modem.MODEM_STATE_RECEIVING \
+                            and random.random() < probability_of_delivery:
+                        # # Single arrival and received successfully
+                        self.process_acoustic_packet(acoustic_packet)
+
+                    else:
+                        # Packet lost - log and provide message to controller for logging
+                        pass
+
+                    # Update state of the receiver
+
+
+            else:
+                # No arriving acoustic packets
+                pass
+
+            if not self._arriving_acoustic_packets and not self._transmitting_acoustic_packet:
+                # Nothing coming or going so quiet
+                self._receiver_state = Modem.RECEIVER_STATE_QUIET
+
+
+            # 4. Check for timeout if awaiting an Ack
             #_debug_print("Checking ack status")
             if self._acoustic_state == self.ACOUSTIC_STATE_WAIT_ACK:
                 delay_time = time.time() - self._acoustic_ack_wait_time
@@ -426,19 +493,9 @@ class Modem:
                         self._output_stream.flush()
 
 
-            # Check modem state and update
-            if self._modem_state == Modem.MODEM_STATE_LISTENING:
-                # Carry on
-                pass
-            elif self._modem_state == Modem.MODEM_STATE_RECEIVING:
-                # When did we start receiving? How long left? And we need to pass the packet to be processed.
-                pass
-            elif self._modem_state == Modem.MODEM_STATE_UARTING:
-                pass
-            elif self._modem_state == Modem.MODEM_STATE_TRANSMITTING:
-                pass
-            elif self._modem_state == Modem.MODEM_STATE_SLEEPING:
-                pass
+
+
+
 
 
     def send_time_packet(self):
@@ -451,7 +508,6 @@ class Modem:
         self._local_sent_time = time.time()
         _debug_print("NetworkPacket (TimePacket) to Controller sent at: " + str(self._local_sent_time))
         return
-
 
     def send_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Send an AcousticPacket.
@@ -479,141 +535,133 @@ class Modem:
 
         return self._local_sent_time
 
+    def update_modem_state(self, modem_state, modem_event=None):
+        self._modem_state = modem_state
+        if self._modem_state == Modem.MODEM_STATE_TRANSMITTING:
+            self._receiver_state = Modem.RECEIVER_STATE_SATURATED
+
+        # Send state information to controller
+
     def process_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Process an AcousticPacket."""
 
-        # Update receiver state based on modem state. update start time.
-        if self._receiver_state == Modem.RECEIVER_STATE_QUIET:
-            # If Modem is listening then we can process, otherwise move to overlapped mode
-            pass
-        elif self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL:
-            # We now have an overlapped state - all packets lost
-            pass
-        elif self._receiver_state == Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL:
-            # We remain in an overlapped state - all packets lost
-            pass
-        elif self._receiver_state == Modem.RECEIVER_STATE_SATURATED:
-            # Overlapped mode after saturated
-            pass
+        # State
+        if self._acoustic_state == self.ACOUSTIC_STATE_WAIT_ACK:
+            # Check for DownChirp on the acoustic_packet - ignore if not downchip.
+            if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_DN:
+                # Ack Received
+                if acoustic_packet.address == self._acoustic_ack_wait_address:
+                    # This is the Ack we are looking for.
+                    self.update_modem_state(Modem.MODEM_STATE_UARTING, Modem.MODEM_EVENT_RECEIVE_SUCCESS)
+                    if self._output_stream and self._output_stream.writable():
+                        local_received_time = self.get_local_time(acoustic_packet.hamr_timestamp)
+                        delay_time = local_received_time - self._acoustic_ack_wait_time
+                        _debug_print("Ack delay_time: " + str(delay_time))
+                        timeval = int(delay_time * 16000.0)
+                        response_str = "#R" + "{:03d}".format(
+                            acoustic_packet.address) + "T" + "{:05d}".format(timeval) + "\r\n"
+                        response_bytes = response_str.encode('utf-8')
+                        self._output_stream.write(response_bytes)
+                        self._output_stream.flush()
 
+                    self._acoustic_state = self.ACOUSTIC_STATE_IDLE
+                self.update_modem_state(Modem.MODEM_STATE_LISTENING)
+        else:
+            # Check for UpChirp on the acoustic_packet - ignore if not upchirp.
+            if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_UP:
+                if acoustic_packet.payload_length == 0 and acoustic_packet.address == self._local_address:
+                    # Control commands
+                    # CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
+                    if acoustic_packet.command == AcousticPacket.CMD_PING_REQ:
+                        # Ping request so send a reply
+                        acoustic_packet_to_send = AcousticPacket(
+                            frame_synch=AcousticPacket.FRAMESYNCH_DN,
+                            address=self._local_address,
+                            command=AcousticPacket.CMD_PING_REP,
+                            hamr_timestamp=acoustic_packet.hamr_timestamp)
+                        self.send_acoustic_packet(acoustic_packet_to_send)
+                        self._transmitting_acoustic_packet = acoustic_packet_to_send
+                        self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
 
-        # Determine if this packet was received successfully
-        probability_of_delivery = self.calculate_probability_of_delivery(acoustic_packet.receive_snr, acoustic_packet.payload_length)
-        _debug_print("receive_snr=" + str(acoustic_packet.receive_snr))
-        _debug_print("probability_of_delivery=" + str(probability_of_delivery))
-        # Check probability
-        if random.random() < probability_of_delivery:
-            # Received successfully
+                    elif acoustic_packet.command == AcousticPacket.CMD_TEST_REQ:
+                        # Test message acoustic message as a broadcast
+                        payload_str = "This is a test message from a Virtual NM3"
+                        payload_bytes = list(payload_str.encode('utf-8'))
 
-            # State
-            if self._acoustic_state == self.ACOUSTIC_STATE_WAIT_ACK:
-                # Check for DownChirp on the acoustic_packet - ignore if not downchip.
-                if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_DN:
-                    # Ack Received
-                    if acoustic_packet.address == self._acoustic_ack_wait_address:
-                        # This is the Ack we are looking for.
+                        acoustic_packet_to_send = AcousticPacket(
+                            frame_synch=AcousticPacket.FRAMESYNCH_UP,
+                            address=self._local_address,
+                            command=AcousticPacket.CMD_BROADCAST_MSG,
+                            payload_length=len(payload_bytes),
+                            payload_bytes=payload_bytes,
+                            hamr_timestamp=self.get_hamr_time())
+                        self.send_acoustic_packet(acoustic_packet_to_send)
+                        self._transmitting_acoustic_packet = acoustic_packet_to_send
+                        self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
+
+                    # Other commands not supported at the moment.
+
+                else:
+                    # Message Packets
+                    # CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
+                    if acoustic_packet.command == AcousticPacket.CMD_UNICAST_MSG and acoustic_packet.address == self._local_address:
+                        # Construct the bytes to be sent to the output_stream
+                        # "#U..."
                         if self._output_stream and self._output_stream.writable():
-                            local_received_time = self.get_local_time(acoustic_packet.hamr_timestamp)
-                            delay_time = local_received_time - self._acoustic_ack_wait_time
-                            _debug_print("Ack delay_time: " + str(delay_time))
-                            timeval = int(delay_time * 16000.0)
-                            response_str = "#R" + "{:03d}".format(
-                                acoustic_packet.address) + "T" + "{:05d}".format(timeval) + "\r\n"
-                            response_bytes = response_str.encode('utf-8')
+                            response_bytes = b"#U" \
+                                             + "{:02d}".format(
+                                acoustic_packet.payload_length).encode('utf-8') \
+                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
                             self._output_stream.write(response_bytes)
                             self._output_stream.flush()
 
-                        self._acoustic_state = self.ACOUSTIC_STATE_IDLE
-            else:
-                # Check for UpChirp on the acoustic_packet - ignore if not upchirp.
-                if acoustic_packet.frame_synch == AcousticPacket.FRAMESYNCH_UP:
-                    if acoustic_packet.payload_length == 0 and acoustic_packet.address == self._local_address:
-                        # Control commands
-                        # CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
-                        if acoustic_packet.command == AcousticPacket.CMD_PING_REQ:
-                            # Ping request so send a reply
-                            acoustic_packet_to_send = AcousticPacket(
-                                frame_synch=AcousticPacket.FRAMESYNCH_DN,
-                                address=self._local_address,
-                                command=AcousticPacket.CMD_PING_REP,
-                                hamr_timestamp=acoustic_packet.hamr_timestamp)
-                            self.send_acoustic_packet(acoustic_packet_to_send)
+                    elif acoustic_packet.command == AcousticPacket.CMD_BROADCAST_MSG:
+                        # Construct the bytes to be sent to the output_stream
+                        # "#B..."
+                        if self._output_stream and self._output_stream.writable():
+                            response_bytes = b"#B" \
+                                             + "{:03d}".format(
+                                acoustic_packet.address).encode('utf-8') \
+                                             + "{:02d}".format(
+                                acoustic_packet.payload_length).encode('utf-8') \
+                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
+                            self._output_stream.write(response_bytes)
+                            self._output_stream.flush()
 
-                        elif acoustic_packet.command == AcousticPacket.CMD_TEST_REQ:
-                            # Test message acoustic message as a broadcast
-                            payload_str = "This is a test message from a Virtual NM3"
-                            payload_bytes = list(payload_str.encode('utf-8'))
+                    elif acoustic_packet.command == AcousticPacket.CMD_UNICAST_ACK_MSG and acoustic_packet.address == self._local_address:
+                        # Ack request so send a reply
+                        acoustic_packet_to_send = AcousticPacket(
+                            frame_synch=AcousticPacket.FRAMESYNCH_DN,
+                            address=self._local_address,
+                            command=AcousticPacket.CMD_PING_REP,
+                            hamr_timestamp=acoustic_packet.hamr_timestamp)
+                        self.send_acoustic_packet(acoustic_packet_to_send)
+                        self._transmitting_acoustic_packet = acoustic_packet_to_send
+                        self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
 
-                            acoustic_packet_to_send = AcousticPacket(
-                                frame_synch=AcousticPacket.FRAMESYNCH_UP,
-                                address=self._local_address,
-                                command=AcousticPacket.CMD_BROADCAST_MSG,
-                                payload_length=len(payload_bytes),
-                                payload_bytes=payload_bytes,
-                                hamr_timestamp=self.get_hamr_time())
-                            self.send_acoustic_packet(acoustic_packet_to_send)
+                        # Construct the bytes to be sent to the output_stream
+                        # "#U..."
+                        if self._output_stream and self._output_stream.writable():
+                            response_bytes = b"#U" \
+                                             + "{:02d}".format(
+                                acoustic_packet.payload_length).encode('utf-8') \
+                                             + bytes(acoustic_packet.payload_bytes) + b"\r\n"
+                            self._output_stream.write(response_bytes)
+                            self._output_stream.flush()
 
-                        # Other commands not supported at the moment.
+                    elif acoustic_packet.command == AcousticPacket.CMD_ECHO_MSG and acoustic_packet.address == self._local_address:
+                        # Echo the acoustic message as a broadcast
+                        acoustic_packet_to_send = AcousticPacket(
+                            frame_synch=AcousticPacket.FRAMESYNCH_UP,
+                            address=self._local_address,
+                            command=AcousticPacket.CMD_BROADCAST_MSG,
+                            payload_length=acoustic_packet.payload_length,
+                            payload_bytes=acoustic_packet.payload_bytes,
+                            hamr_timestamp=self.get_hamr_time())
+                        self.send_acoustic_packet(acoustic_packet_to_send)
+                        self._transmitting_acoustic_packet = acoustic_packet_to_send
+                        self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
 
-                    else:
-                        # Message Packets
-                        # CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
-                        if acoustic_packet.command == AcousticPacket.CMD_UNICAST_MSG and acoustic_packet.address == self._local_address:
-                            # Construct the bytes to be sent to the output_stream
-                            # "#U..."
-                            if self._output_stream and self._output_stream.writable():
-                                response_bytes = b"#U" \
-                                                 + "{:02d}".format(
-                                    acoustic_packet.payload_length).encode('utf-8') \
-                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                                self._output_stream.write(response_bytes)
-                                self._output_stream.flush()
-
-                        elif acoustic_packet.command == AcousticPacket.CMD_BROADCAST_MSG:
-                            # Construct the bytes to be sent to the output_stream
-                            # "#B..."
-                            if self._output_stream and self._output_stream.writable():
-                                response_bytes = b"#B" \
-                                                 + "{:03d}".format(
-                                    acoustic_packet.address).encode('utf-8') \
-                                                 + "{:02d}".format(
-                                    acoustic_packet.payload_length).encode('utf-8') \
-                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                                self._output_stream.write(response_bytes)
-                                self._output_stream.flush()
-
-                        elif acoustic_packet.command == AcousticPacket.CMD_UNICAST_ACK_MSG and acoustic_packet.address == self._local_address:
-                            # Ack request so send a reply
-                            acoustic_packet_to_send = AcousticPacket(
-                                frame_synch=AcousticPacket.FRAMESYNCH_DN,
-                                address=self._local_address,
-                                command=AcousticPacket.CMD_PING_REP,
-                                hamr_timestamp=acoustic_packet.hamr_timestamp)
-                            self.send_acoustic_packet(acoustic_packet_to_send)
-
-                            # Construct the bytes to be sent to the output_stream
-                            # "#U..."
-                            if self._output_stream and self._output_stream.writable():
-                                response_bytes = b"#U" \
-                                                 + "{:02d}".format(
-                                    acoustic_packet.payload_length).encode('utf-8') \
-                                                 + bytes(acoustic_packet.payload_bytes) + b"\r\n"
-                                self._output_stream.write(response_bytes)
-                                self._output_stream.flush()
-
-                        elif acoustic_packet.command == AcousticPacket.CMD_ECHO_MSG and acoustic_packet.address == self._local_address:
-                            # Echo the acoustic message as a broadcast
-                            acoustic_packet_to_send = AcousticPacket(
-                                frame_synch=AcousticPacket.FRAMESYNCH_UP,
-                                address=self._local_address,
-                                command=AcousticPacket.CMD_BROADCAST_MSG,
-                                payload_length=acoustic_packet.payload_length,
-                                payload_bytes=acoustic_packet.payload_bytes,
-                                hamr_timestamp=self.get_hamr_time())
-                            self.send_acoustic_packet(acoustic_packet_to_send)
-        else:
-            # Packet lost - log and provide message to controller for logging
-            pass
 
 
     def process_bytes(self, some_bytes: bytes):
@@ -752,9 +800,12 @@ class Modem:
                                 command=AcousticPacket.CMD_PING_REQ,
                                 hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
                             self.send_acoustic_packet(acoustic_packet_to_send)
+                            self._transmitting_acoustic_packet = acoustic_packet_to_send
+                            self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
+
                             self._acoustic_ack_wait_address = address_to_ping
                             self._acoustic_state = self.ACOUSTIC_STATE_WAIT_ACK
-                            self._modem_state = Modem.MODEM_STATE_TRANSMITTING
+
 
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
@@ -792,9 +843,11 @@ class Modem:
                                 command=AcousticPacket.CMD_TEST_REQ,
                                 hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
                             self.send_acoustic_packet(acoustic_packet_to_send)
+                            self._transmitting_acoustic_packet = acoustic_packet_to_send
+                            self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
 
                             self._acoustic_state = self.ACOUSTIC_STATE_IDLE
-                            self._modem_state = Modem.MODEM_STATE_TRANSMITTING
+
 
                     # Return to Idle
                     self._simulator_state = self.SIMULATOR_STATE_IDLE
@@ -871,7 +924,8 @@ class Modem:
                             payload_bytes=self._message_bytes,
                             hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
                         self.send_acoustic_packet(acoustic_packet_to_send)
-                        self._modem_state = Modem.MODEM_STATE_TRANSMITTING
+                        self._transmitting_acoustic_packet = acoustic_packet_to_send
+                        self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
 
                         # If Ack
                         if self._message_type == 'M':
