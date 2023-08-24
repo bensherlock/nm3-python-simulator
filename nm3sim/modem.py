@@ -95,17 +95,18 @@ class Modem:
     MODEM_STATES = (MODEM_STATE_LISTENING, MODEM_STATE_RECEIVING, MODEM_STATE_TRANSMITTING,
                     MODEM_STATE_UARTING, MODEM_STATE_SLEEPING)
 
-    MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_START, \
-        MODEM_EVENT_TRANSMIT_COMPLETE = range(4)
+    MODEM_EVENT_RECEIVE_START, MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL, MODEM_EVENT_TRANSMIT_START, \
+        MODEM_EVENT_TRANSMIT_COMPLETE = range(5)
 
     MODEM_EVENT_NAMES = {
+        MODEM_EVENT_RECEIVE_START: 'Receive Start',
         MODEM_EVENT_RECEIVE_SUCCESS: 'Receive Success',
         MODEM_EVENT_RECEIVE_FAIL: 'Receive Fail',
         MODEM_EVENT_TRANSMIT_START: 'Transmit Start',
         MODEM_EVENT_TRANSMIT_COMPLETE: 'Transmit Complete'
     }
 
-    MODEM_EVENTS = (MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL,
+    MODEM_EVENTS = (MODEM_EVENT_RECEIVE_START, MODEM_EVENT_RECEIVE_SUCCESS, MODEM_EVENT_RECEIVE_FAIL,
                     MODEM_EVENT_TRANSMIT_START, MODEM_EVENT_TRANSMIT_COMPLETE)
 
     RECEIVER_STATE_QUIET, RECEIVER_STATE_SINGLE_ARRIVAL, RECEIVER_STATE_OVERLAPPED_ARRIVAL,\
@@ -412,6 +413,9 @@ class Modem:
                             if self._receiver_state == Modem.RECEIVER_STATE_QUIET:
                                 # Single arrival
                                 self._receiver_state = Modem.RECEIVER_STATE_SINGLE_ARRIVAL
+                                if self._modem_state == Modem.MODEM_STATE_LISTENING:
+                                    # Then start receiving
+                                    self.update_modem_state(Modem.MODEM_STATE_RECEIVING, Modem.MODEM_EVENT_RECEIVE_START)
                             elif self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL:
                                 # Collision
                                 self._receiver_state = Modem.RECEIVER_STATE_OVERLAPPED_ARRIVAL
@@ -429,8 +433,11 @@ class Modem:
             if self._transmitting_acoustic_packet:
                 # Are we still transmitting
                 if self._transmitting_acoustic_packet.hamr_timestamp + \
-                        self._transmitting_acoustic_packet.transmit_duration >= self.get_hamr_time():
+                        self._transmitting_acoustic_packet.transmit_duration <= self.get_hamr_time():
                     # Transmission complete
+                    #print("Current HAMR Time=" + str(self.get_hamr_time()))
+                    #print("self._transmitting_acoustic_packet.hamr_timestamp=" + str(self._transmitting_acoustic_packet.hamr_timestamp))
+                    #print("self._transmitting_acoustic_packet.transmit_duration=" + str(self._transmitting_acoustic_packet.transmit_duration))
                     self._transmitting_acoustic_packet = None
                     # Return to listening
                     self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_TRANSMIT_COMPLETE)
@@ -447,7 +454,7 @@ class Modem:
             if self._arriving_acoustic_packets:
 
                 if self._arriving_acoustic_packets[0].hamr_timestamp + \
-                        self._arriving_acoustic_packets[0].transmit_duration >= self.get_hamr_time():
+                        self._arriving_acoustic_packets[0].transmit_duration <= self.get_hamr_time():
                     # Packet has now completed arriving
                     acoustic_packet = self._arriving_acoustic_packets.pop(0)
 
@@ -456,18 +463,20 @@ class Modem:
                     _debug_print("receive_snr=" + str(acoustic_packet.receive_snr))
                     _debug_print("probability_of_delivery=" + str(probability_of_delivery))
 
-                    if self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL \
-                            and self._modem_state == Modem.MODEM_STATE_RECEIVING \
+                    if self._modem_state == Modem.MODEM_STATE_RECEIVING:
+                        if self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL \
                             and random.random() < probability_of_delivery:
-                        # # Single arrival and received successfully
-                        self.process_acoustic_packet(acoustic_packet)
+                            # Single arrival and received successfully
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_SUCCESS)
+                            self.process_acoustic_packet(acoustic_packet)
+                        else:
+                            # Receiving but failed
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_FAIL)
+                            pass
 
                     else:
-                        # Packet lost - log and provide message to controller for logging
+                        # Not in a receiving state - do we need to alert to a lost packet if we hadn't synched?
                         pass
-
-                    # Update state of the receiver
-
 
             else:
                 # No arriving acoustic packets
@@ -541,6 +550,9 @@ class Modem:
             self._receiver_state = Modem.RECEIVER_STATE_SATURATED
 
         # Send state information to controller
+        print("modem_state=" + Modem.MODEM_STATE_NAMES[modem_state])
+        if modem_event:
+            print("modem_event=" + Modem.MODEM_EVENT_NAMES[modem_event])
 
     def process_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Process an AcousticPacket."""
