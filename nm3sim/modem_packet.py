@@ -29,7 +29,7 @@
 # SOFTWARE.
 #
 
-from modem import Modem
+#from .modem import Modem
 
 
 class ModemPacket:

@@ -42,13 +42,15 @@ from typing import Union
 import zmq
 
 from .acoustic_packet import AcousticPacket
+from .modem_packet import ModemPacket
+from .modem import Modem
 from .node_base import NodeBase
 from .node_packet import NodePacket
 
 
 def _debug_print(*args, **kwargs):
     """File local debug printing"""
-    print(*args, **kwargs)
+    #print(*args, **kwargs)
     pass
 
 
@@ -69,6 +71,7 @@ class MapVisualisation:
 
         self._nodes = {}  # Map unique_id to node
         self._node_acoustic_packets = {}  # Map unique id to list of acoustic packets
+        self._node_modem_states = {}  # Map unique id to modem state
 
         self._display_to_be_updated = True
 
@@ -152,6 +155,17 @@ class MapVisualisation:
         self._display_to_be_updated = True
 
 
+    def process_modem_packet(self, node_id, modem_packet):
+        """Process incoming new modem packets."""
+
+        if not self.has_node(node_id):
+            self.add_node(node_id)
+
+        self._node_modem_states[node_id] = modem_packet.modem_state
+
+        self._display_to_be_updated = True
+
+
 
     def create_display(self):
         """Create the display window."""
@@ -175,8 +189,23 @@ class MapVisualisation:
 
             self._map_ax.clear()
 
-            x_positions = [float(n.position_xy[0]) for n in self._nodes.values()]
-            y_positions = [float(n.position_xy[1]) for n in self._nodes.values()]
+            # Ordered by node_id keys
+            x_positions = [float(self._nodes[k].position_xy[0]) for k in self._nodes.keys()]
+            y_positions = [float(self._nodes[k].position_xy[1]) for k in self._nodes.keys()]
+
+            #x_positions = [float(n.position_xy[0]) for n in self._nodes.values()]
+            #y_positions = [float(n.position_xy[1]) for n in self._nodes.values()]
+
+            modem_state_colours = {
+                Modem.MODEM_STATE_LISTENING: '#00ff00',
+                Modem.MODEM_STATE_RECEIVING: '#00ffff',
+                Modem.MODEM_STATE_TRANSMITTING: '#ffff00',
+                Modem.MODEM_STATE_UARTING: '#444444',
+                Modem.MODEM_STATE_SLEEPING: '#000000'
+            }
+
+            #states =
+
 
             if x_positions and y_positions:
                 margin = 100.0
@@ -188,6 +217,12 @@ class MapVisualisation:
 
                 #print(x_positions)
                 #print(y_positions)
+
+                # Colours based on current modem states
+                node_colors = []
+
+
+
 
                 self._map_ax.scatter(x_positions, y_positions)
                 self._map_ax.set_xlim(lim)
@@ -258,6 +293,7 @@ class MapVisualisation:
             #self._socket.subscribe(b"AcousticPacket")
             self._socket.setsockopt(zmq.SUBSCRIBE, b"NodePacket")
             self._socket.setsockopt(zmq.SUBSCRIBE, b"AcousticPacket")
+            self._socket.setsockopt(zmq.SUBSCRIBE, b"ModemPacket")
 
             self._socket_poller = zmq.Poller()
             self._socket_poller.register(self._socket, zmq.POLLIN)
@@ -302,6 +338,12 @@ class MapVisualisation:
                             # Process the AcousticPacket
                             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
                             self.process_acoustic_packet(node_id, acoustic_packet)
+
+                        if "ModemPacket" in network_message_jason:
+                            # Process the ModemPacket
+                            modem_packet = ModemPacket.from_json(network_message_jason["ModemPacket"])
+                            self.process_modem_packet(node_id, modem_packet)
+                            pass
 
                     except zmq.ZMQError:
                         more_messages = False

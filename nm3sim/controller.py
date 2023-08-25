@@ -55,7 +55,7 @@ from zmq.eventloop.zmqstream import ZMQStream
 
 def _debug_print(*args, **kwargs):
     """File local debug printing"""
-    print(*args, **kwargs)
+    #print(*args, **kwargs)
     pass
 
 
@@ -263,6 +263,13 @@ class Controller:
             #for s in self._scheduled_network_packets:
             #    print(s)
 
+        if "ModemPacket" in network_message_jason:
+            _debug_print("ModemPacket")
+            if self._publish_socket:
+                # Forward to loggers and visualisation clients
+                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+            pass
+
 
     def check_for_packets_to_send(self):
         """Check for packets to send."""
@@ -344,6 +351,11 @@ class Controller:
 
             # Get next scheduled network Packet
             self.check_for_packets_to_send()
+
+            # Yield the thread
+            time.sleep(0)
+
+            pass
 
 
 

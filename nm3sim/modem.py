@@ -30,6 +30,7 @@
 #
 
 from .acoustic_packet import AcousticPacket
+from .modem_packet import ModemPacket
 from .node_packet import NodePacket
 from .time_packet import TimePacket
 
@@ -502,9 +503,11 @@ class Modem:
                         self._output_stream.flush()
 
 
+            # Yield the thread
+            time.sleep(0.00000000001)
 
 
-
+            pass
 
 
     def send_time_packet(self):
@@ -544,15 +547,31 @@ class Modem:
 
         return self._local_sent_time
 
+    def send_modem_packet(self, modem_packet: ModemPacket):
+        """Send a ModemPacket.
+        Returns time sent"""
+        jason = { "ModemPacket": modem_packet.json() }
+        json_string = json.dumps(jason)
+        self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
+
+        self._local_sent_time = time.time()
+        _debug_print("NetworkPacket (ModemPacket) to Controller sent at: " + str(self._local_sent_time))
+
+        return self._local_sent_time
+
     def update_modem_state(self, modem_state, modem_event=None):
         self._modem_state = modem_state
+
         if self._modem_state == Modem.MODEM_STATE_TRANSMITTING:
             self._receiver_state = Modem.RECEIVER_STATE_SATURATED
 
         # Send state information to controller
-        print("modem_state=" + Modem.MODEM_STATE_NAMES[modem_state])
-        if modem_event:
-            print("modem_event=" + Modem.MODEM_EVENT_NAMES[modem_event])
+        modem_packet = ModemPacket(modem_state=modem_state, modem_event=modem_event)
+        self.send_modem_packet(modem_packet)
+
+        #print("modem_state=" + Modem.MODEM_STATE_NAMES[modem_state])
+        #if modem_event is not None:
+        #    print("modem_event=" + Modem.MODEM_EVENT_NAMES[modem_event])
 
     def process_acoustic_packet(self, acoustic_packet: AcousticPacket):
         """Process an AcousticPacket."""
