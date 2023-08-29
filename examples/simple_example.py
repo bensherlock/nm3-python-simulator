@@ -40,9 +40,11 @@ from nm3sim.controller import Controller
 from nm3sim.propagation_model_simple import PropagationModelSimple
 from nm3sim.terminal_client import *
 from nm3sim.mapvis_client import MapVisualisation
+from nm3sim.simulation_logger import SimulationLogger
 
 from nm3driver.nm3driver import Nm3, MessagePacket
 
+from _datetime import datetime
 import signal
 from threading import Thread
 from multiprocessing import Process
@@ -63,11 +65,28 @@ def start_controller(network_address, network_port, publish_port):
     controller.start()
 
 
-def start_mapvis(network_address, network_port):
-    client = MapVisualisation(network_address=network_address,
-                            network_port=network_port  )
+def start_logger(network_address, network_port, log_filename):
+    #
+    # Simulation Logger
+    #
+
+    client = SimulationLogger(network_address=network_address,
+                              network_port=network_port,
+                              log_filename=log_filename)
 
     client.run()
+
+
+def start_mapvis(network_address, network_port):
+    #
+    # Map Visualisation
+    #
+
+    client = MapVisualisation(network_address=network_address,
+                              network_port=network_port)
+
+    client.run()
+
 
 
 def start_transponder(network_address, network_port, address, position_xy, depth, label):
@@ -267,6 +286,17 @@ def main():
     print("Starting the Controller")
     controller_process = Process(target=start_controller, args=(network_address, network_port, publish_port))
     controller_process.start()
+
+    # Wait for it to startup before proceeding
+    time.sleep(5.0)
+
+    # Open a new logfile with current time
+    file_datetime = datetime.utcnow()
+    dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
+    log_filename = "SimpleExampleLogs" + '-' + dt_str + '.txt'
+    print("Starting the Simulation Logger")
+    simulation_logger_process = Process(target=start_logger, args=(network_address, publish_port, log_filename))
+    simulation_logger_process.start()
 
     # Wait for it to startup before proceeding
     time.sleep(5.0)

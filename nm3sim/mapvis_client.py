@@ -69,6 +69,7 @@ class MapVisualisation:
         self._speed_of_sound = 1500.0  # To be provided from elsewhere.
         self._max_acoustic_propagation_range = 4000.0
 
+
         self._nodes = {}  # Map unique_id to node
         self._node_acoustic_packets = {}  # Map unique id to list of acoustic packets
         self._node_modem_states = {}  # Map unique id to modem state
@@ -170,6 +171,7 @@ class MapVisualisation:
     def create_display(self):
         """Create the display window."""
         plt.ion()  # interactive mode on
+        plt.style.use('Solarize_Light2')
         self._figure = plt.figure()
 
         self._map_ax = self._figure.add_subplot(1, 1, 1)
@@ -196,15 +198,26 @@ class MapVisualisation:
             #x_positions = [float(n.position_xy[0]) for n in self._nodes.values()]
             #y_positions = [float(n.position_xy[1]) for n in self._nodes.values()]
 
+            MODEM_STATE_NONE = -1
+
             modem_state_colours = {
-                Modem.MODEM_STATE_LISTENING: '#00ff00',
-                Modem.MODEM_STATE_RECEIVING: '#00ffff',
-                Modem.MODEM_STATE_TRANSMITTING: '#ffff00',
+                MODEM_STATE_NONE: '#111111',
+                Modem.MODEM_STATE_LISTENING: '#114411',
+                Modem.MODEM_STATE_RECEIVING: '#11AA11',
+                Modem.MODEM_STATE_TRANSMITTING: '#AA1111',
                 Modem.MODEM_STATE_UARTING: '#444444',
                 Modem.MODEM_STATE_SLEEPING: '#000000'
             }
 
-            #states =
+            states = []
+            for node_key in self._nodes.keys():
+                if node_key in self._node_modem_states.keys():
+                    states.append( self._node_modem_states[node_key] )
+                else:
+                    states.append(MODEM_STATE_NONE)
+
+            state_colours = [ modem_state_colours[state] for state in states ]
+
 
 
             if x_positions and y_positions:
@@ -218,22 +231,18 @@ class MapVisualisation:
                 #print(x_positions)
                 #print(y_positions)
 
-                # Colours based on current modem states
-                node_colors = []
+                # Colours based on current modem states: state_colours
 
-
-
-
-                self._map_ax.scatter(x_positions, y_positions)
+                self._map_ax.scatter(x_positions, y_positions, s=80.0, c=state_colours)
                 self._map_ax.set_xlim(lim)
                 self._map_ax.set_ylim(lim)
                 self._map_ax.set_aspect(1)  # square
                 self._map_ax.set_xlabel("x (m)")
                 self._map_ax.set_ylabel("y (m)")
 
-                for node in self._nodes.values():
-                    if node.label:
-                        self._map_ax.text(x=node.position_xy[0], y=node.position_xy[1], s=node.label)
+                #for node in self._nodes.values():
+                #    if node.label:
+                #        self._map_ax.text(x=node.position_xy[0], y=node.position_xy[1], s=node.label)
 
 
             current_hamr_time = self.get_hamr_time()
@@ -263,7 +272,12 @@ class MapVisualisation:
                     if outer_diameter > self._max_acoustic_propagation_range:
                         self._node_acoustic_packets[node_id].remove(acoustic_packet)
 
-
+            # Replot the scatter points over the top of the acoustic waves
+            if x_positions and y_positions:
+                self._map_ax.scatter(x_positions, y_positions, s=80.0, c=state_colours)
+                for node in self._nodes.values():
+                    if node.label:
+                        self._map_ax.text(x=node.position_xy[0], y=node.position_xy[1], s="  " + node.label)
 
             # update visualization
             #self._figure.canvas.draw()

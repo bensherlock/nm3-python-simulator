@@ -29,51 +29,43 @@
 # SOFTWARE.
 #
 
-#from .modem import Modem
-
 
 class ModemPacket:
     """Modem Packet class."""
 
-    def __init__(self, modem_state=None, modem_event=None, label=None):
+    def __init__(self, modem_state=None, modem_event=None, label=None, modem_state_str=None, modem_event_str=None):
         self._modem_state = modem_state
         self._modem_event = modem_event
         self._label = label
+
+        self._modem_state_str = modem_state_str
+        self._modem_event_str = modem_event_str
+
 
     @property
     def modem_state(self):
         return self._modem_state
 
-    @modem_state.setter
-    def modem_state(self, modem_state):
-        self._modem_state = modem_state
-
     @property
     def modem_event(self):
         return self._modem_event
-
-    @modem_event.setter
-    def modem_event(self, modem_event):
-        self._modem_event = modem_event
 
     @property
     def label(self) -> str:
         return self._label
 
-    @label.setter
-    def label(self, label: str):
-        self._label = label
 
     def json(self):
         """Returns a json dictionary representation."""
-        jason = {"ModemState": self._modem_state,
-                 "ModemEvent": self._modem_event, "Label": self._label}
+        jason = {"ModemState": self._modem_state, "ModemStateStr": self._modem_state_str,
+                 "ModemEvent": self._modem_event, "ModemEventStr": self._modem_event_str,
+                 "Label": self._label}
         return jason
 
     @staticmethod
     def from_json(jason): # -> Union[ModemPacket, None]:
         modem_packet = ModemPacket(modem_state=jason["ModemState"], modem_event=jason["ModemEvent"],
-                                  label=jason["Label"])
+                                  label=jason["Label"], modem_state_str=jason["ModemStateStr"], modem_event_str=jason["ModemEventStr"])
 
         return modem_packet
 

@@ -173,6 +173,12 @@ class Modem:
         self._last_packet_received_time = None
         self._last_packet_sent_time = None
 
+        # Periodic Updates to Controller
+        self._last_update_time_time_packet = 0.0
+        self._last_update_time_node_packet = 0.0
+        self._last_update_time_modem_packet = 0.0
+        self._controller_update_rate = 10.0
+
         # Transmitter
         self._transmitting_acoustic_packet = None  # The current outgoing acoustic packet
 
@@ -354,12 +360,17 @@ class Modem:
             self.send_time_packet()
 
         while True:  # Main Loop
-            # 1. Node Position
-            if self._position_information_updated:
+            # 1. Node Position - Updated or Periodic
+            if self._position_information_updated or (time.time() > (self._last_update_time_node_packet + self._controller_update_rate)):
                 # Send positional information update
                 self._position_information_updated = False
                 node_packet = NodePacket(position_xy=self._position_xy, depth=self._depth, label=self._label)
                 self.send_node_packet(node_packet)
+
+            # Modem State Periodic Update
+            if time.time() > (self._last_update_time_modem_packet + self._controller_update_rate):
+                modem_packet = ModemPacket(modem_state=self._modem_state, modem_event=None, label=self._label, modem_state_str=Modem.MODEM_STATE_NAMES[self._modem_state])
+                self.send_modem_packet(modem_packet)
 
             # 2. Serial Port
             if self._input_stream and self._input_stream.readable():
@@ -519,6 +530,9 @@ class Modem:
         self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
         self._local_sent_time = time.time()
         _debug_print("NetworkPacket (TimePacket) to Controller sent at: " + str(self._local_sent_time))
+
+        self._last_update_time_time_packet = self._local_sent_time
+
         return
 
     def send_acoustic_packet(self, acoustic_packet: AcousticPacket):
@@ -545,6 +559,8 @@ class Modem:
         self._local_sent_time = time.time()
         _debug_print("NetworkPacket (NodePacket) to Controller sent at: " + str(self._local_sent_time))
 
+        self._last_update_time_node_packet = self._local_sent_time
+
         return self._local_sent_time
 
     def send_modem_packet(self, modem_packet: ModemPacket):
@@ -557,6 +573,8 @@ class Modem:
         self._local_sent_time = time.time()
         _debug_print("NetworkPacket (ModemPacket) to Controller sent at: " + str(self._local_sent_time))
 
+        self._last_update_time_modem_packet = self._local_sent_time
+
         return self._local_sent_time
 
     def update_modem_state(self, modem_state, modem_event=None):
@@ -566,7 +584,17 @@ class Modem:
             self._receiver_state = Modem.RECEIVER_STATE_SATURATED
 
         # Send state information to controller
-        modem_packet = ModemPacket(modem_state=modem_state, modem_event=modem_event)
+        if modem_state is not None:
+            modem_state_str = Modem.MODEM_STATE_NAMES[modem_state]
+        else:
+            modem_state_str = None
+
+        if modem_event is not None:
+            modem_event_str = Modem.MODEM_EVENT_NAMES[modem_event]
+        else:
+            modem_event_str = None
+
+        modem_packet = ModemPacket(modem_state=modem_state, modem_event=modem_event, label=self._label, modem_state_str=modem_state_str, modem_event_str=modem_event_str)
         self.send_modem_packet(modem_packet)
 
         #print("modem_state=" + Modem.MODEM_STATE_NAMES[modem_state])
