@@ -50,19 +50,21 @@ from threading import Thread
 from multiprocessing import Process
 
 
-
-def start_controller(network_address, network_port, publish_port):
+def start_controller(network_address, network_port, publish_port, log_filename):
     #
     # Controller
     #
 
     controller = Controller(
-        network_address=network_address, network_port=network_port, publish_port=publish_port)
+        network_address=network_address, network_port=network_port, publish_port=publish_port, log_filename=log_filename)
 
     propagation_model = PropagationModelSimple(speed_of_sound=1500.0, attenuation_alpha=4.0, noise_spectral_density=50.0)
     controller.propagation_model = propagation_model
 
-    controller.start()
+    try:
+        controller.start()
+    except KeyboardInterrupt:
+        controller.stop()
 
 
 def start_logger(network_address, network_port, log_filename):
@@ -283,23 +285,27 @@ def main():
     publish_port = 8081
 
     # Create and run a Controller
+    file_datetime = datetime.utcnow()
+    dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
+    log_filename = "SimpleExampleLogs" + '-' + dt_str + '.json'
     print("Starting the Controller")
-    controller_process = Process(target=start_controller, args=(network_address, network_port, publish_port))
+    controller_process = Process(target=start_controller, args=(network_address, network_port, publish_port,
+                                                                log_filename))
     controller_process.start()
 
     # Wait for it to startup before proceeding
     time.sleep(5.0)
 
     # Open a new logfile with current time
-    file_datetime = datetime.utcnow()
-    dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
-    log_filename = "SimpleExampleLogs" + '-' + dt_str + '.txt'
-    print("Starting the Simulation Logger")
-    simulation_logger_process = Process(target=start_logger, args=(network_address, publish_port, log_filename))
-    simulation_logger_process.start()
+    #file_datetime = datetime.utcnow()
+    #dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
+    #log_filename = "SimpleExampleLogs" + '-' + dt_str + '.txt'
+    #print("Starting the Simulation Logger")
+    #simulation_logger_process = Process(target=start_logger, args=(network_address, publish_port, log_filename))
+    #simulation_logger_process.start()
 
     # Wait for it to startup before proceeding
-    time.sleep(5.0)
+    #time.sleep(5.0)
 
     # Create and run the MapVisualisation
     print("Starting the MapVisualisation")
@@ -350,6 +356,9 @@ def main():
     #print("Starting Terminal Client N007 - In this process/thread")
     #start_terminal_modem(network_address, network_port, 7, (0.0,0.0), 10.0, "N007")
 
+
+    controller_process.join()
+    gateway_node_process.join()
 
 
 

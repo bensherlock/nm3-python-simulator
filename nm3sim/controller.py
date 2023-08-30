@@ -62,7 +62,7 @@ def _debug_print(*args, **kwargs):
 class Controller:
     """Controller. """
 
-    def __init__(self, network_address=None, network_port=None, publish_port=None):
+    def __init__(self, network_address=None, network_port=None, publish_port=None, log_filename=None):
         self._network_address = network_address
         self._network_port = network_port
         self._socket = None
@@ -80,6 +80,8 @@ class Controller:
         #self._socket_stream = None
         #self._socket_loop = None
 
+        self._is_running = False
+
         self._nodes = {}  # Map unique_id to node
 
         self._propagation_model = PropagationModelBase()  # Default model
@@ -88,8 +90,21 @@ class Controller:
 
         self._startup_time = time.time()
 
+        self._log_filename = log_filename
+        self._log_file = None
 
+        if self._log_filename:
+            try:
+                # 0=no buffer, 1=Line buffering, N=bytes buffering, None=system default
+                bufsize = 1
+                self._log_file = open(self._log_filename, "w", buffering=bufsize)
 
+                # Write the header
+                self.log_header()
+
+            except Exception as ex:
+                print(ex)
+                pass
 
     def __call__(self):
         return self
@@ -178,20 +193,48 @@ class Controller:
 
         return None, None, None
 
+    def log_header(self):
+        """Write the header of the log file."""
+        if self._log_file:
+            self._log_file.write('{ "LogEntries": [\n')
+
+    def log_footer(self):
+        """Write the footer of the log file."""
+        if self._log_file:
+            self._log_file.write('] }')
+
+    def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
+        """Log the packet to file for analysis or playback"""
+        if self._log_file:
+            log_entry_jason = {
+                "SimulationTime": simulation_time,
+                "ZmqTimestamp": zmq_timestamp,
+                "UniqueId": list(unique_id),
+                "NetworkMessage": network_message_jason
+            }
+            log_entry_jason_str = json.dumps(log_entry_jason)
+            self._log_file.write(log_entry_jason_str)
+            self._log_file.write(",\n")
+
+        pass
+
     def on_recv(self, msg):
         """Callback handler for on_recv."""
         #unique_id, network_message_json_bytes = self._socket.recv_multipart(zmq.DONTWAIT)  # blocking
-        unique_id = msg[0]
-        network_message_json_bytes = msg[1]
-        zmq_timestamp = float(msg[2].decode('utf-8'))
+        unique_id = msg[0]  # bytes object containing 5 or 4 bytes
+        network_message_json_bytes = msg[1]  # bytes array of the json string
+        zmq_timestamp = float(msg[2].decode('utf-8'))  # bytes array of the float string
 
         local_received_time = time.time()
+        simulation_time = local_received_time - self._startup_time
         _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from " + str(unique_id) + " received at: " + str(local_received_time))
         network_message_json_str = network_message_json_bytes.decode('utf-8')
         network_message_jason = json.loads(network_message_json_str)
 
         # _debug_print("Network Packet received from: " + str(unique_id) + " -- " + network_message_json_str)
 
+        # Log received NetworkMessages.
+        #self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
 
         if "TimePacket" in network_message_jason:
             _debug_print("TimePacket")
@@ -206,12 +249,14 @@ class Controller:
 
             self._socket.send_multipart([unique_id, new_network_message_json_str.encode('utf-8'), str(time.time()).encode('utf-8')])
 
-
         if not self.has_node(unique_id):
             self.add_node(unique_id)
 
         if "NodePacket" in network_message_jason:
             _debug_print("NodePacket")
+            # Log received NetworkMessages.
+            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
                 self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
@@ -226,6 +271,9 @@ class Controller:
 
         if "AcousticPacket" in network_message_jason:
             _debug_print("AcousticPacket")
+            # Log received NetworkMessages.
+            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
                 self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
@@ -268,6 +316,9 @@ class Controller:
 
         if "ModemPacket" in network_message_jason:
             _debug_print("ModemPacket")
+            # Log received NetworkMessages.
+            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
                 self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
@@ -285,9 +336,16 @@ class Controller:
             # Get next scheduled network Packet
             socket_id, network_packet_json_str, scheduled_network_packet = self.next_scheduled_network_packet(time.time())
 
+    def stop(self):
+        """Stop the process."""
+        print("Stopping Controller")
+        self._is_running = False
+
     def start(self):
         """Start the simulation. Bind to the address and port ready for
         virtual nodes."""
+        print("Starting Controller")
+
         if not self._network_address or not self._network_port:
             raise TypeError("Network Address/Port not set. Address("
                                     + self._network_address
@@ -330,8 +388,9 @@ class Controller:
             print("Binding Publisher to: " + socket_string)
             self._publish_socket.bind(socket_string)
 
+        self._is_running = True
 
-        while True:
+        while self._is_running:
             # Poll the socket
             # Router socket so first frame of multi part message is an identifier for the client.
             # Incoming Network Messages
@@ -360,7 +419,8 @@ class Controller:
 
             pass
 
-
+        # Shutting down
+        self.log_footer()
 
 
 def main():
@@ -393,8 +453,6 @@ def main():
 
     publish_port = cmdline_args.publish_port
 
-
-
     #
     # Controller Mode
     #
@@ -409,8 +467,11 @@ def main():
     propagation_model = PropagationModelSimple()
     controller.propagation_model = propagation_model
 
-    controller.start()
-
+    try:
+        controller.start()
+    except KeyboardInterrupt as ex:
+        controller.stop()
+        raise ex
 
 
 if __name__ == '__main__':
