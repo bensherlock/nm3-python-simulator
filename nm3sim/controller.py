@@ -31,6 +31,7 @@
 
 import argparse
 import copy
+from enum import Enum
 import json
 import math
 import random
@@ -59,10 +60,15 @@ def _debug_print(*args, **kwargs):
     pass
 
 
+class ControllerMode(Enum):
+    """Controller Operating Mode. Live or Playback of json logs"""
+    Live = 0,
+    Playback = 1
+
 class Controller:
     """Controller. """
 
-    def __init__(self, network_address=None, network_port=None, publish_port=None, log_filename=None):
+    def __init__(self, network_address=None, network_port=None, publish_port=None, log_filename=None, controller_mode:ControllerMode=ControllerMode.Live, playback_start_time=0.0, playback_speed=1.0):
         self._network_address = network_address
         self._network_port = network_port
         self._socket = None
@@ -80,6 +86,8 @@ class Controller:
         #self._socket_stream = None
         #self._socket_loop = None
 
+        self._controller_mode = controller_mode
+
         self._is_running = False
 
         self._nodes = {}  # Map unique_id to node
@@ -92,19 +100,30 @@ class Controller:
 
         self._log_filename = log_filename
         self._log_file = None
+        self._log_file_first_entry = True
 
         if self._log_filename:
             try:
-                # 0=no buffer, 1=Line buffering, N=bytes buffering, None=system default
-                bufsize = 1
-                self._log_file = open(self._log_filename, "w", buffering=bufsize)
+                if self._controller_mode == ControllerMode.Live:
+                    # open in write mode
+                    # 0=no buffer, 1=Line buffering, N=bytes buffering, None=system default
+                    bufsize = 1
+                    self._log_file = open(self._log_filename, "w", buffering=bufsize)
 
-                # Write the header
-                self.log_header()
+                    # Write the header
+                    self.log_header()
+
+                elif self._controller_mode == ControllerMode.Playback:
+                    # Open in read mode
+                    self._log_file = open(self._log_filename, "r")
 
             except Exception as ex:
                 print(ex)
                 pass
+
+        self._playback_start_time = playback_start_time
+        self._playback_speed = playback_speed
+
 
     def __call__(self):
         return self
@@ -197,10 +216,12 @@ class Controller:
         """Write the header of the log file."""
         if self._log_file:
             self._log_file.write('{ "LogEntries": [\n')
+            self._log_file_first_entry = True
 
     def log_footer(self):
         """Write the footer of the log file."""
         if self._log_file:
+            self._log_file.write("\n")
             self._log_file.write('] }')
 
     def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
@@ -213,8 +234,14 @@ class Controller:
                 "NetworkMessage": network_message_jason
             }
             log_entry_jason_str = json.dumps(log_entry_jason)
+
+            if self._log_file_first_entry:
+                self._log_file_first_entry = False
+            else:
+                self._log_file.write(",\n")
+
             self._log_file.write(log_entry_jason_str)
-            self._log_file.write(",\n")
+
 
         pass
 
@@ -259,7 +286,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
+                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
 
             node = self.get_node(unique_id)
             if node:
@@ -276,7 +303,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
+                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
 
             # Send to all nodes, except the transmitting node
             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
@@ -321,7 +348,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
+                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
             pass
 
 
@@ -336,16 +363,10 @@ class Controller:
             # Get next scheduled network Packet
             socket_id, network_packet_json_str, scheduled_network_packet = self.next_scheduled_network_packet(time.time())
 
-    def stop(self):
-        """Stop the process."""
-        print("Stopping Controller")
-        self._is_running = False
 
-    def start(self):
-        """Start the simulation. Bind to the address and port ready for
-        virtual nodes."""
-        print("Starting Controller")
 
+    def run_live_mode(self):
+        """Run in Live mode"""
         if not self._network_address or not self._network_port:
             raise TypeError("Network Address/Port not set. Address("
                                     + self._network_address
@@ -388,39 +409,128 @@ class Controller:
             print("Binding Publisher to: " + socket_string)
             self._publish_socket.bind(socket_string)
 
-        self._is_running = True
 
-        while self._is_running:
-            # Poll the socket
-            # Router socket so first frame of multi part message is an identifier for the client.
-            # Incoming Network Messages
-            # NetworkMessage {
-            # 1. AcousticPacket: { FrameSynch: Up/Dn, Address: 0-255, Command: 0-3, PayloadLength: 0-64, PayloadBytes: bytes(0-64) }
-            # 2. NodePacket: { PositionXY: {x: float, y: float}, Depth: float }
-            # }
-            # Poll the socket for incoming messages
-            # _debug_print("Checking socket poller")
-            sockets = dict(self._socket_poller.poll(1))
-            if self._socket in sockets:
-                more_messages = True
-                while more_messages:
-                    try:
-                        #unique_id, network_message_json_bytes = self._socket.recv_multipart(zmq.DONTWAIT) #  blocking
-                        msg = self._socket.recv_multipart(zmq.DONTWAIT)  # blocking
-                        self.on_recv(msg)
-                    except zmq.ZMQError:
-                        more_messages = False
 
-            # Get next scheduled network Packet
-            self.check_for_packets_to_send()
+        try:
+            while True:
+                # Poll the socket
+                # Router socket so first frame of multi part message is an identifier for the client.
+                # Incoming Network Messages
+                # NetworkMessage {
+                # 1. AcousticPacket: { FrameSynch: Up/Dn, Address: 0-255, Command: 0-3, PayloadLength: 0-64, PayloadBytes: bytes(0-64) }
+                # 2. NodePacket: { PositionXY: {x: float, y: float}, Depth: float }
+                # }
+                # Poll the socket for incoming messages
+                # _debug_print("Checking socket poller")
+                sockets = dict(self._socket_poller.poll(1))
+                if self._socket in sockets:
+                    more_messages = True
+                    while more_messages:
+                        try:
+                            #unique_id, network_message_json_bytes = self._socket.recv_multipart(zmq.DONTWAIT) #  blocking
+                            msg = self._socket.recv_multipart(zmq.DONTWAIT)  # blocking
+                            self.on_recv(msg)
+                        except zmq.ZMQError:
+                            more_messages = False
 
-            # Yield the thread
-            time.sleep(0)
+                # Get next scheduled network Packet
+                self.check_for_packets_to_send()
+
+                # Yield the thread
+                time.sleep(0)
+
+                pass
+
+        finally:
+            # Shutting down
+
+            # Close the log file
+            self.log_footer()
+            if self._log_file:
+                self._log_file.close()
+                self._log_file = None
+
+
+
+    def run_playback_mode(self):
+        """Run in Playback mode. This mode takes the log entries and at the right time sends them to the publish port.
+        There is no live interaction from modems, it is for analysing behaviour by using the client visualisations
+        such as mapvis."""
+
+        if not self._log_file:
+            raise ValueError("Log file not provided for Playback")
+
+        # Load log file as json
+        log_file_jason = json.load(self._log_file)
+
+        if self._publish_socket:
+            # Already created
+            pass
+        else:
+            # Publish socket for subscribers such as loggers or visualisation
+            context = zmq.Context()
+            self._publish_socket = context.socket(zmq.PUB)
+            socket_string = "tcp://" + self._network_address + ":"+ str(self._publish_port)
+            print("Binding Publisher to: " + socket_string)
+            self._publish_socket.bind(socket_string)
+
+        # Wait for clients to connect before commencing playback
+        print("Waiting for 10 seconds for clients to connect")
+        time.sleep(10.0)
+        print("Starting Playback")
+
+        # Run the system now
+        simulation_start_time = time.time() - self._playback_start_time
+        for log_entry in log_file_jason["LogEntries"]:
+
+            # Prepare the parameters
+            simulation_time = log_entry["SimulationTime"]
+            unique_id = bytes(log_entry["UniqueId"])
+            zmq_timestamp = log_entry["ZmqTimestamp"]
+            network_message_jason = log_entry["NetworkMessage"]
+            network_message_json_str = json.dumps(network_message_jason)
+            network_message_json_bytes = network_message_json_str.encode('utf-8')
+
+            topic = b"Packet"
+            if "NodePacket" in network_message_jason:
+                topic = b"NodePacket"
+            elif "AcousticPacket" in network_message_jason:
+                topic = b"AcousticPacket"
+            elif "ModemPacket" in network_message_jason:
+                topic = b"ModemPacket"
+
+            # Wait until half time
+            transmit_actual_time = simulation_start_time + (simulation_time/self._playback_speed)
+
+            while transmit_actual_time > time.time():
+                time.sleep( (transmit_actual_time - time.time()) / 2.0 )  # yield
+                pass
+
+
+            # Now publish
+            if self._publish_socket:
+                # Forward to loggers and visualisation clients
+                self._publish_socket.send_multipart([topic, unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
 
             pass
 
-        # Shutting down
-        self.log_footer()
+        # Playback complete
+        print("Playback Complete")
+        if self._log_file:
+            self._log_file.close()
+
+    def start(self):
+        """Start the simulation. Bind to the address and port ready for
+        virtual nodes."""
+
+        if self._controller_mode == ControllerMode.Live:
+            print("Starting Controller: Live mode")
+            self.run_live_mode()
+
+        elif self._controller_mode == ControllerMode.Playback:
+            print("Starting Controller: Playback mode")
+            self.run_playback_mode()
+
 
 
 def main():
@@ -443,6 +553,22 @@ def main():
     cmdline_parser.add_argument('--publish_port',
                                 help='The publish port to connect to.', type=int)
 
+    # Log Filename
+    cmdline_parser.add_argument('--log_filename',
+                                help='The log filename for logging to in live mode or playback from.')
+
+    # Controller Mode
+    cmdline_parser.add_argument('--controller_mode',
+                                help='The controller mode: live/playback',
+                                choices=['live', 'playback'],
+                                default='live')
+
+    cmdline_parser.add_argument('--playback_start_time',
+                                help='The simulation time to start playback from', type=float, default=0.0)
+
+    cmdline_parser.add_argument('--playback_speed',
+                                help='The simulation speed to playback the logs', type=float, default=1.0)
+
     # Parse the command line
     cmdline_args = cmdline_parser.parse_args()
 
@@ -453,8 +579,23 @@ def main():
 
     publish_port = cmdline_args.publish_port
 
+    log_filename = cmdline_args.log_filename
+
+
+    controller_mode_str = cmdline_args.controller_mode
+
+    controller_mode = None
+    if controller_mode_str == 'live':
+        controller_mode = ControllerMode.Live
+    elif controller_mode_str == 'playback':
+        controller_mode = ControllerMode.Playback
+
+    playback_start_time = cmdline_args.playback_start_time
+
+    playback_speed = cmdline_args.playback_speed
+
     #
-    # Controller Mode
+    # Controller
     #
 
     print("Starting Controller")
@@ -462,16 +603,15 @@ def main():
     print("pyzmq version: " + zmq.pyzmq_version())
 
     controller = Controller(
-        network_address=network_address, network_port=network_port, publish_port=publish_port)
+        network_address=network_address, network_port=network_port, publish_port=publish_port,
+        log_filename=log_filename, controller_mode=controller_mode, playback_start_time=playback_start_time,
+        playback_speed=playback_speed)
 
     propagation_model = PropagationModelSimple()
     controller.propagation_model = propagation_model
 
-    try:
-        controller.start()
-    except KeyboardInterrupt as ex:
-        controller.stop()
-        raise ex
+    controller.start()
+
 
 
 if __name__ == '__main__':

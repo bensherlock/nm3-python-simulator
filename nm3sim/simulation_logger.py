@@ -61,6 +61,7 @@ class SimulationLogger:
 
         self._log_filename = log_filename
         self._log_file = None
+        self._log_file_first_entry = True
 
         self._is_running = False
 
@@ -69,10 +70,12 @@ class SimulationLogger:
         """Write the header of the log file."""
         if self._log_file:
             self._log_file.write('{ "LogEntries": [\n')
+            self._log_file_first_entry = True
 
     def log_footer(self):
         """Write the footer of the log file."""
         if self._log_file:
+            self._log_file.write("\n")
             self._log_file.write('] }')
 
     def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
@@ -85,8 +88,13 @@ class SimulationLogger:
                 "NetworkMessage": network_message_jason
             }
             log_entry_jason_str = json.dumps(log_entry_jason)
+
+            if self._log_file_first_entry:
+                self._log_file_first_entry = False
+            else:
+                self._log_file.write(",\n")
+
             self._log_file.write(log_entry_jason_str)
-            self._log_file.write(",\n")
 
         pass
 
@@ -129,43 +137,46 @@ class SimulationLogger:
                 print(ex)
                 pass
 
-        self._is_running = True
+        try:
+            while True:
+                # Poll the socket for incoming "acoustic" messages
+                #_debug_print("Checking socket poller")
+                sockets = dict(self._socket_poller.poll(1))
+                if self._socket in sockets:
+                    more_messages = True
+                    while more_messages:
+                        try:
+                            msg = self._socket.recv_multipart(zmq.DONTWAIT)
 
-        while self._is_running:
-            # Poll the socket for incoming "acoustic" messages
-            #_debug_print("Checking socket poller")
-            sockets = dict(self._socket_poller.poll(1))
-            if self._socket in sockets:
-                more_messages = True
-                while more_messages:
-                    try:
-                        msg = self._socket.recv_multipart(zmq.DONTWAIT)
+                            local_received_time = time.time()
+                            _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from Controller received at: " + str(local_received_time))
 
-                        local_received_time = time.time()
-                        _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from Controller received at: " + str(local_received_time))
+                            topic = msg[0]
+                            node_id = msg[1]
+                            network_message_json_bytes = msg[2]
+                            zmq_timestamp = float(msg[3].decode('utf-8'))
+                            simulation_time = float(msg[4].decode('utf-8'))
 
-                        topic = msg[0]
-                        node_id = msg[1]
-                        network_message_json_bytes = msg[2]
-                        zmq_timestamp = float(msg[3].decode('utf-8'))
-                        simulation_time = float(msg[4].decode('utf-8'))
+                            network_message_json_str = network_message_json_bytes.decode('utf-8')
+                            network_message_jason = json.loads(network_message_json_str)
 
-                        network_message_json_str = network_message_json_bytes.decode('utf-8')
-                        network_message_jason = json.loads(network_message_json_str)
+                            _debug_print("Network Packet received: " + network_message_json_str)
 
-                        _debug_print("Network Packet received: " + network_message_json_str)
-
-                        # Log received NetworkMessages.
-                        self.log_packet(simulation_time, zmq_timestamp, node_id, network_message_jason)
-
-
-                    except zmq.ZMQError:
-                        more_messages = False
+                            # Log received NetworkMessages.
+                            self.log_packet(simulation_time, zmq_timestamp, node_id, network_message_jason)
 
 
-        self.log_footer()
-        if self._log_file:
-            self._log_file.close()
+                        except zmq.ZMQError:
+                            more_messages = False
+
+        finally:
+            # Shutting down
+
+            # Close files
+            self.log_footer()
+            if self._log_file:
+                self._log_file.close()
+                self._log_file = None
 
 
 

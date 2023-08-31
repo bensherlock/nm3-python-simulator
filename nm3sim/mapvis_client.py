@@ -66,8 +66,13 @@ class MapVisualisation:
         # Offset to synchronise times
         self._hamr_time_offset = 0.0
 
+        self._local_simulation_start_time = 0.0
+        self._playback_speed = 1.0  # This may be slower depending on the controller
+
+
         self._speed_of_sound = 1500.0  # To be provided from elsewhere.
         self._max_acoustic_propagation_range = 4000.0
+
 
 
         self._nodes = {}  # Map unique_id to node
@@ -334,9 +339,12 @@ class MapVisualisation:
                         network_message_json_bytes = msg[2]
                         zmq_timestamp = float(msg[3].decode('utf-8'))
                         simulation_time = float(msg[4].decode('utf-8'))
+                        playback_speed = float(msg[5].decode('utf-8'))
 
-                        # Update the time offset
-                        self._hamr_time_offset = zmq_timestamp - local_received_time
+                        # calculate local time equivalent for the simulation start
+                        self._local_simulation_start_time = local_received_time - (simulation_time / playback_speed)
+
+                        self._hamr_time_offset = local_received_time - zmq_timestamp
 
 
                         network_message_json_str = network_message_json_bytes.decode('utf-8')
