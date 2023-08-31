@@ -29,17 +29,20 @@
 # SOFTWARE.
 #
 
+from .acoustic_packet import AcousticPacket
 
 class ModemPacket:
     """Modem Packet class."""
 
-    def __init__(self, modem_state=None, modem_event=None, label=None, modem_state_str=None, modem_event_str=None):
+    def __init__(self, modem_state=None, modem_event=None, label=None, modem_state_str=None, modem_event_str=None, acoustic_packet: AcousticPacket=None):
         self._modem_state = modem_state
         self._modem_event = modem_event
         self._label = label
 
         self._modem_state_str = modem_state_str
         self._modem_event_str = modem_event_str
+
+        self._acoustic_packet = acoustic_packet
 
 
     @property
@@ -57,15 +60,25 @@ class ModemPacket:
 
     def json(self):
         """Returns a json dictionary representation."""
+        acoustic_packet_jason = None
+        if self._acoustic_packet:
+            acoustic_packet_jason = self._acoustic_packet.json()
+
         jason = {"ModemState": self._modem_state, "ModemStateStr": self._modem_state_str,
                  "ModemEvent": self._modem_event, "ModemEventStr": self._modem_event_str,
-                 "Label": self._label}
+                 "Label": self._label,
+                 "AcousticPacket": acoustic_packet_jason}
         return jason
 
     @staticmethod
     def from_json(jason): # -> Union[ModemPacket, None]:
+        acoustic_packet = None
+        if jason["AcousticPacket"]:
+            acoustic_packet = AcousticPacket.from_json(jason["AcousticPacket"])
+
         modem_packet = ModemPacket(modem_state=jason["ModemState"], modem_event=jason["ModemEvent"],
-                                  label=jason["Label"], modem_state_str=jason["ModemStateStr"], modem_event_str=jason["ModemEventStr"])
+                                  label=jason["Label"], modem_state_str=jason["ModemStateStr"], modem_event_str=jason["ModemEventStr"],
+                                   acoustic_packet=acoustic_packet)
 
         return modem_packet
 

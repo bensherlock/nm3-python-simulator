@@ -297,12 +297,12 @@ def main():
     time.sleep(5.0)
 
     # Open a new logfile with current time
-    #file_datetime = datetime.utcnow()
-    #dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
-    #log_filename = "SimpleExampleLogs" + '-' + dt_str + '.txt'
-    #print("Starting the Simulation Logger")
-    #simulation_logger_process = Process(target=start_logger, args=(network_address, publish_port, log_filename))
-    #simulation_logger_process.start()
+    file_datetime = datetime.utcnow()
+    dt_str = file_datetime.strftime('%Y%m%dT%H%M%S')
+    log_filename = "SimpleExampleLogs-SimulationLogger" + '-' + dt_str + '.json'
+    print("Starting the Simulation Logger")
+    simulation_logger_process = Process(target=start_logger, args=(network_address, publish_port, log_filename))
+    simulation_logger_process.start()
 
     # Wait for it to startup before proceeding
     #time.sleep(5.0)

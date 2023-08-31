@@ -259,7 +259,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
 
             node = self.get_node(unique_id)
             if node:
@@ -276,7 +276,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
 
             # Send to all nodes, except the transmitting node
             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
@@ -321,7 +321,7 @@ class Controller:
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8')])
+                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8')])
             pass
 
 

@@ -479,11 +479,11 @@ class Modem:
                         if self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL \
                             and random.random() < probability_of_delivery:
                             # Single arrival and received successfully
-                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_SUCCESS)
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_SUCCESS, acoustic_packet)
                             self.process_acoustic_packet(acoustic_packet)
                         else:
                             # Receiving but failed
-                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_FAIL)
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_FAIL, acoustic_packet)
                             pass
 
                     else:
@@ -577,7 +577,7 @@ class Modem:
 
         return self._local_sent_time
 
-    def update_modem_state(self, modem_state, modem_event=None):
+    def update_modem_state(self, modem_state, modem_event=None, acoustic_packet: AcousticPacket = None):
         self._modem_state = modem_state
 
         if self._modem_state == Modem.MODEM_STATE_TRANSMITTING:
@@ -594,7 +594,9 @@ class Modem:
         else:
             modem_event_str = None
 
-        modem_packet = ModemPacket(modem_state=modem_state, modem_event=modem_event, label=self._label, modem_state_str=modem_state_str, modem_event_str=modem_event_str)
+        modem_packet = ModemPacket(modem_state=modem_state, modem_event=modem_event, label=self._label,
+                                   modem_state_str=modem_state_str, modem_event_str=modem_event_str,
+                                   acoustic_packet=acoustic_packet)
         self.send_modem_packet(modem_packet)
 
         #print("modem_state=" + Modem.MODEM_STATE_NAMES[modem_state])

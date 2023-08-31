@@ -333,6 +333,7 @@ class MapVisualisation:
                         node_id = msg[1]
                         network_message_json_bytes = msg[2]
                         zmq_timestamp = float(msg[3].decode('utf-8'))
+                        simulation_time = float(msg[4].decode('utf-8'))
 
                         # Update the time offset
                         self._hamr_time_offset = zmq_timestamp - local_received_time

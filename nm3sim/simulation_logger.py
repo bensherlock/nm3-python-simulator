@@ -62,6 +62,33 @@ class SimulationLogger:
         self._log_filename = log_filename
         self._log_file = None
 
+        self._is_running = False
+
+
+    def log_header(self):
+        """Write the header of the log file."""
+        if self._log_file:
+            self._log_file.write('{ "LogEntries": [\n')
+
+    def log_footer(self):
+        """Write the footer of the log file."""
+        if self._log_file:
+            self._log_file.write('] }')
+
+    def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
+        """Log the packet to file for analysis or playback"""
+        if self._log_file:
+            log_entry_jason = {
+                "SimulationTime": simulation_time,
+                "ZmqTimestamp": zmq_timestamp,
+                "UniqueId": list(unique_id),
+                "NetworkMessage": network_message_jason
+            }
+            log_entry_jason_str = json.dumps(log_entry_jason)
+            self._log_file.write(log_entry_jason_str)
+            self._log_file.write(",\n")
+
+        pass
 
     def run(self):
         """Run the client. Never returns."""
@@ -96,22 +123,15 @@ class SimulationLogger:
                 bufsize = 1
                 self._log_file = open(self._log_filename, "w", buffering=bufsize)
 
-                 # Write the header to file
-                self._log_file.write( "ZMQ Timestamp" )
-                self._log_file.write(",")
-
-                self._log_file.write( "NodeId" )
-                self._log_file.write(",")
-
-                self._log_file.write( "Packet" )
-                self._log_file.write("\n")
+                self.log_header()
 
             except Exception as ex:
                 print(ex)
                 pass
 
+        self._is_running = True
 
-        while True:
+        while self._is_running:
             # Poll the socket for incoming "acoustic" messages
             #_debug_print("Checking socket poller")
             sockets = dict(self._socket_poller.poll(1))
@@ -128,29 +148,24 @@ class SimulationLogger:
                         node_id = msg[1]
                         network_message_json_bytes = msg[2]
                         zmq_timestamp = float(msg[3].decode('utf-8'))
+                        simulation_time = float(msg[4].decode('utf-8'))
 
                         network_message_json_str = network_message_json_bytes.decode('utf-8')
                         network_message_jason = json.loads(network_message_json_str)
 
                         _debug_print("Network Packet received: " + network_message_json_str)
 
-                        # Write the log to file
-                        if self._log_file:
-                            self._log_file.write( str(zmq_timestamp) )
-                            self._log_file.write(",")
-
-                            self._log_file.write( str(node_id) )
-                            self._log_file.write(",")
-
-                            self._log_file.write(network_message_json_str)
-                            self._log_file.write("\n")
+                        # Log received NetworkMessages.
+                        self.log_packet(simulation_time, zmq_timestamp, node_id, network_message_jason)
 
 
                     except zmq.ZMQError:
                         more_messages = False
 
 
-
+        self.log_footer()
+        if self._log_file:
+            self._log_file.close()
 
 
 
