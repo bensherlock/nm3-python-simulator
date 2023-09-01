@@ -63,10 +63,10 @@ class MapVisualisation:
         self._socket = None
         self._socket_poller = None
 
-        # Offset to synchronise times
+        # Offset to synchronise times - Based on Simulation Time = 0.0
         self._hamr_time_offset = 0.0
 
-        self._local_simulation_start_time = 0.0
+        self._simulation_start_time = 0.0
         self._playback_speed = 1.0  # This may be slower depending on the controller
 
 
@@ -84,6 +84,14 @@ class MapVisualisation:
         self._figure = None
         self._map_ax = None
 
+    def get_simulation_time(self, local_time=None):
+        """"Get the current Simulation Time."""
+        if local_time:
+            simulation_time = (local_time - self._simulation_start_time) * self._playback_speed
+        else:
+            simulation_time = (time.time() - self._simulation_start_time) * self._playback_speed
+
+        return simulation_time
 
     def get_hamr_time(self, local_time=None):
         """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
@@ -342,7 +350,7 @@ class MapVisualisation:
                         playback_speed = float(msg[5].decode('utf-8'))
 
                         # calculate local time equivalent for the simulation start
-                        self._local_simulation_start_time = local_received_time - (simulation_time / playback_speed)
+                        self._simulation_start_time = local_received_time - (simulation_time / playback_speed)
 
                         self._hamr_time_offset = local_received_time - zmq_timestamp
 
