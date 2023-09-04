@@ -76,9 +76,6 @@ class Controller:
         self._publish_port = publish_port
         self._publish_socket = None
 
-        # NTP Offset to synchronise timestamps
-        self._ntp_offset = 0.0
-
         # Polling version
         self._socket_poller = None
 
@@ -96,7 +93,7 @@ class Controller:
 
         self._scheduled_network_packets = []
 
-        self._startup_time = time.time()
+        self._simulation_start_time = time.time()  # This is what we base Simulation Time from
 
         self._log_filename = log_filename
         self._log_file = None
@@ -136,19 +133,20 @@ class Controller:
     def propagation_model(self, propagation_model: PropagationModelBase):
         self._propagation_model = propagation_model
 
-    def get_hamr_time(self, local_time=None):
-        """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
-        if local_time:
-            hamr_time = self._ntp_offset + local_time
-            return hamr_time
-        else:
-            hamr_time = self._ntp_offset + time.time()
-            return hamr_time
 
-    def get_local_time(self, hamr_time=None):
-        """Get local time from Homogenous Acoustic Medium Relative time or time.time()."""
-        if hamr_time:
-            local_time = hamr_time - self._ntp_offset
+    def get_simulation_time(self, local_time=None):
+        """Get simulation time from either local_time or time.time()."""
+        if local_time:
+            simulation_time = (local_time - self._simulation_start_time) * self._playback_speed
+        else:
+            simulation_time = (time.time() - self._simulation_start_time) * self._playback_speed
+
+        return simulation_time
+
+    def get_local_time(self, simulation_time=None):
+        """Get local time from simulation start time or time.time()."""
+        if simulation_time:
+            local_time = (simulation_time / self._playback_speed) + self._simulation_start_time
             return local_time
         else:
             return time.time()
@@ -200,7 +198,7 @@ class Controller:
     def schedule_network_packet(self, transmit_time, unique_id, network_packet_json_string):
         """Schedule a network packet transmission."""
         self._scheduled_network_packets.append( (transmit_time, unique_id, network_packet_json_string) )
-        self._scheduled_network_packets.sort(key=lambda tup: tup[0]) # sort by time
+        self._scheduled_network_packets.sort(key=lambda tup: tup[0])  # sort by time
 
     def next_scheduled_network_packet(self, current_time):
         """Get the next scheduled network packet to be transmitted at the current time."""
@@ -224,12 +222,12 @@ class Controller:
             self._log_file.write("\n")
             self._log_file.write('] }')
 
-    def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
-        """Log the packet to file for analysis or playback"""
+    def log_packet(self, transmitted_simulation_time, received_simulation_time, unique_id, network_message_jason):
+        """Log the packet to file for analysis or playback."""
         if self._log_file:
             log_entry_jason = {
-                "SimulationTime": simulation_time,
-                "ZmqTimestamp": zmq_timestamp,
+                "TransmittedSimulationTime": transmitted_simulation_time,
+                "ReceivedSimulationTime": received_simulation_time,
                 "UniqueId": list(unique_id),
                 "NetworkMessage": network_message_jason
             }
@@ -250,31 +248,33 @@ class Controller:
         #unique_id, network_message_json_bytes = self._socket.recv_multipart(zmq.DONTWAIT)  # blocking
         unique_id = msg[0]  # bytes object containing 5 or 4 bytes
         network_message_json_bytes = msg[1]  # bytes array of the json string
-        zmq_timestamp = float(msg[2].decode('utf-8'))  # bytes array of the float string
+        transmitted_simulation_timestamp = float(msg[2].decode('utf-8'))  # bytes array of the float string - timestamp of the sender
 
-        local_received_time = time.time()
-        simulation_time = local_received_time - self._startup_time
-        _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from " + str(unique_id) + " received at: " + str(local_received_time))
+        received_local_time = time.time()
+        received_simulation_time = self.get_simulation_time(received_local_time)
+
+        _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from " + str(unique_id)
+                     + " received at: " + str(received_local_time))
         network_message_json_str = network_message_json_bytes.decode('utf-8')
         network_message_jason = json.loads(network_message_json_str)
 
         # _debug_print("Network Packet received from: " + str(unique_id) + " -- " + network_message_json_str)
 
         # Log received NetworkMessages.
-        #self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+        #self.log_packet(received_simulation_time, zmq_timestamp, unique_id, network_message_jason)
 
         if "TimePacket" in network_message_jason:
             _debug_print("TimePacket")
             # Quick Turnaround
             time_packet = TimePacket.from_json(network_message_jason["TimePacket"])
-            time_packet.server_arrival_time = local_received_time
-            #time_packet.client_transmit_time = zmq_timestamp
+            time_packet.server_arrival_time = received_local_time     # both in local time
+            time_packet.server_transmit_time = time.time()  # both in local time
 
-            time_packet.server_transmit_time = time.time()
             new_network_message_jason = {"TimePacket": time_packet.json()}
             new_network_message_json_str = json.dumps(new_network_message_jason)
 
-            self._socket.send_multipart([unique_id, new_network_message_json_str.encode('utf-8'), str(time.time()).encode('utf-8')])
+            self._socket.send_multipart([unique_id, new_network_message_json_str.encode('utf-8'),
+                                         str(self.get_simulation_time()).encode('utf-8')])
 
         if not self.has_node(unique_id):
             self.add_node(unique_id)
@@ -282,11 +282,14 @@ class Controller:
         if "NodePacket" in network_message_jason:
             _debug_print("NodePacket")
             # Log received NetworkMessages.
-            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+            self.log_packet(transmitted_simulation_timestamp, received_simulation_time, unique_id, network_message_jason)
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
+                self._publish_socket.send_multipart([b"NodePacket", unique_id, network_message_json_bytes,
+                                                     str(transmitted_simulation_timestamp).encode('utf-8'),
+                                                     str(received_simulation_time).encode('utf-8'),
+                                                     str(self._playback_speed).encode('utf-8')])
 
             node = self.get_node(unique_id)
             if node:
@@ -299,12 +302,14 @@ class Controller:
         if "AcousticPacket" in network_message_jason:
             _debug_print("AcousticPacket")
             # Log received NetworkMessages.
-            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+            self.log_packet(transmitted_simulation_timestamp, received_simulation_time, unique_id, network_message_jason)
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
-
+                self._publish_socket.send_multipart([b"AcousticPacket", unique_id, network_message_json_bytes,
+                                                     str(transmitted_simulation_timestamp).encode('utf-8'),
+                                                     str(received_simulation_time).encode('utf-8'),
+                                                     str(self._playback_speed).encode('utf-8')])
             # Send to all nodes, except the transmitting node
             acoustic_packet = AcousticPacket.from_json(network_message_jason["AcousticPacket"])
             # Process Channels and Scheduling of acoustic_packet
@@ -312,8 +317,6 @@ class Controller:
 
             # Get source position Information
             source_node = self.get_node(unique_id)
-
-            hamr_received_time = acoustic_packet.hamr_timestamp
 
             for socket_id in self._nodes:
                 # Don't send to itself
@@ -328,10 +331,10 @@ class Controller:
                     propagation_delay = self.calculate_propagation(source_node, destination_node, acoustic_packet_copy)
 
                     # Calculate a transmit_time
-                    hamr_transmit_time = hamr_received_time + propagation_delay
-                    local_transmit_time = self.get_local_time(hamr_transmit_time)
+                    simulation_transmit_time = acoustic_packet.simulation_timestamp + propagation_delay
+                    local_transmit_time = self.get_local_time(simulation_transmit_time)
 
-                    acoustic_packet_copy.hamr_timestamp = hamr_transmit_time
+                    acoustic_packet_copy.simulation_timestamp = simulation_transmit_time
                     new_network_message_jason = {"AcousticPacket": acoustic_packet_copy.json()}
                     new_network_message_json_str = json.dumps(new_network_message_jason)
                     self.schedule_network_packet(local_transmit_time, socket_id,
@@ -344,11 +347,14 @@ class Controller:
         if "ModemPacket" in network_message_jason:
             _debug_print("ModemPacket")
             # Log received NetworkMessages.
-            self.log_packet(simulation_time, zmq_timestamp, unique_id, network_message_jason)
+            self.log_packet(transmitted_simulation_timestamp, received_simulation_time, unique_id, network_message_jason)
 
             if self._publish_socket:
                 # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
+                self._publish_socket.send_multipart([b"ModemPacket", unique_id, network_message_json_bytes,
+                                                     str(transmitted_simulation_timestamp).encode('utf-8'),
+                                                     str(received_simulation_time).encode('utf-8'),
+                                                     str(self._playback_speed).encode('utf-8')])
             pass
 
 
@@ -357,7 +363,8 @@ class Controller:
         socket_id, network_packet_json_str, scheduled_network_packet = self.next_scheduled_network_packet(time.time())
         while socket_id:
             #_debug_print("Sending scheduled network packet: " + str(socket_id) + " - " + network_packet_json_str)
-            self._socket.send_multipart([socket_id, network_packet_json_str.encode('utf-8'), str(time.time()).encode('utf-8')])
+            self._socket.send_multipart([socket_id, network_packet_json_str.encode('utf-8'),
+                                         str(self.get_simulation_time()).encode('utf-8')])
             sent_time = time.time()
             _debug_print("NetworkPacket to " + str(socket_id) + " transmitTime=" + str(scheduled_network_packet[0]) + " sent at: " + str(sent_time))
             # Get next scheduled network Packet
@@ -480,13 +487,18 @@ class Controller:
         print("Starting Playback")
 
         # Run the system now
-        simulation_start_time = time.time() - self._playback_start_time
+        playback_start_time = time.time()
+        self._simulation_start_time = time.time() - (self._playback_start_time / self._playback_speed)
+        print("simulation_start_time=" + str(self._simulation_start_time) + " simulation_time=" + str(self.get_simulation_time()))
+
+        playback_start_time = time.time()
         for log_entry in log_file_jason["LogEntries"]:
 
             # Prepare the parameters
-            simulation_time = log_entry["SimulationTime"]
+            transmitted_simulation_time = log_entry["TransmittedSimulationTime"]
+            received_simulation_time = log_entry["ReceivedSimulationTime"]
             unique_id = bytes(log_entry["UniqueId"])
-            zmq_timestamp = log_entry["ZmqTimestamp"]
+
             network_message_jason = log_entry["NetworkMessage"]
             network_message_json_str = json.dumps(network_message_jason)
             network_message_json_bytes = network_message_json_str.encode('utf-8')
@@ -499,19 +511,35 @@ class Controller:
             elif "ModemPacket" in network_message_jason:
                 topic = b"ModemPacket"
 
-            # Wait until half time
-            transmit_actual_time = simulation_start_time + (simulation_time/self._playback_speed)
-
-            while transmit_actual_time > time.time():
-                time.sleep( (transmit_actual_time - time.time()) / 2.0 )  # yield
+            # Ignore all those that occurred before self._playback_start_time
+            if transmitted_simulation_time < self._playback_start_time:
+                # ignore
                 pass
 
+            else:
+                # Wait until half time
+                #transmit_actual_time = self.get_local_time(transmitted_simulation_time)  # simulation_start_time + (transmitted_simulation_time/self._playback_speed)
+                #print("transmit_actual_time=" + str(transmit_actual_time)
+                #      + " transmitted_simulation_time=" + str(transmitted_simulation_time))
 
-            # Now publish
-            if self._publish_socket:
-                # Forward to loggers and visualisation clients
-                self._publish_socket.send_multipart([topic, unique_id, network_message_json_bytes, str(zmq_timestamp).encode('utf-8'), str(simulation_time).encode('utf-8'), str(self._playback_speed).encode('utf-8')])
+                #while transmit_actual_time > time.time():
+                #    time.sleep( (transmit_actual_time - time.time()) / 2.0 )  # yield
+                #    pass
 
+                while transmitted_simulation_time > self.get_simulation_time():
+                    time.sleep((transmitted_simulation_time - self.get_simulation_time()) / 2.0)  # yield
+                    pass
+
+                #simulation_time = self.get_simulation_time()
+                #print("playback_time=" + str(time.time() - playback_start_time) + " simulation_time=" + str(simulation_time))
+
+                # Now publish
+                if self._publish_socket:
+                    # Forward to loggers and visualisation clients
+                    self._publish_socket.send_multipart([topic, unique_id, network_message_json_bytes,
+                                                         str(transmitted_simulation_time).encode('utf-8'),
+                                                         str(received_simulation_time).encode('utf-8'),
+                                                         str(self._playback_speed).encode('utf-8')])
             pass
 
         # Playback complete

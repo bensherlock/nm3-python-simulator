@@ -48,7 +48,7 @@ class AcousticPacket:
     CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
     CMD_UNICAST_MSG, CMD_BROADCAST_MSG, CMD_UNICAST_ACK_MSG, CMD_ECHO_MSG = range(4)
 
-    def __init__(self, frame_synch=FRAMESYNCH_UP, address=255, command=CMD_PING_REQ, payload_length=0, payload_bytes=None, hamr_timestamp=0.0,
+    def __init__(self, frame_synch=FRAMESYNCH_UP, address=255, command=CMD_PING_REQ, payload_length=0, payload_bytes=None, simulation_timestamp=0.0,
                  source_level=168.0, band_start=24000.0, band_stop=32000.0, receive_snr=20.0, receive_sound_pressure_level=168.0):
         #AcousticPacket: { FrameSynch: Up/Dn, Address: 0-255, Command: 0-3, PayloadLength: 0-64, PayloadBytes: bytes(0-64) }
         self._frame_synch = frame_synch
@@ -56,7 +56,7 @@ class AcousticPacket:
         self._command = command
         self._payload_length = payload_length
         self._payload_bytes = payload_bytes
-        self._hamr_timestamp = hamr_timestamp
+        self._simulation_timestamp = simulation_timestamp
 
         # Source Level (dB re 1uPa @ 1m) is provided by the transmitting modem
         self._source_level = source_level
@@ -121,12 +121,12 @@ class AcousticPacket:
         self._payload_bytes = payload_bytes
 
     @property
-    def hamr_timestamp(self):
-        return self._hamr_timestamp
+    def simulation_timestamp(self):
+        return self._simulation_timestamp
 
-    @hamr_timestamp.setter
-    def hamr_timestamp(self, hamr_timestamp):
-        self._hamr_timestamp = hamr_timestamp
+    @simulation_timestamp.setter
+    def simulation_timestamp(self, simulation_timestamp):
+        self._simulation_timestamp = simulation_timestamp
 
     @property
     def band_start(self) -> float:
@@ -198,7 +198,7 @@ class AcousticPacket:
                  "Command": self._command,
                  "PayloadLength": self._payload_length,
                  "PayloadBytes": self._payload_bytes,
-                 "HamrTimestamp": self._hamr_timestamp,
+                 "SimulationTimestamp": self._simulation_timestamp,
                  "SourceLevel": self.source_level,
                  "BandStart": self.band_start,
                  "BandStop": self.band_stop,
@@ -214,7 +214,7 @@ class AcousticPacket:
                                          command=jason["Command"],
                                          payload_length=jason["PayloadLength"],
                                          payload_bytes=jason["PayloadBytes"],
-                                         hamr_timestamp=jason["HamrTimestamp"],
+                                         simulation_timestamp=jason["SimulationTimestamp"],
                                          source_level=jason["SourceLevel"],
                                          band_start=jason["BandStart"],
                                          band_stop=jason["BandStop"],

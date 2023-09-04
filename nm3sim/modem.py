@@ -145,8 +145,7 @@ class Modem:
         self._socket = None
         self._socket_poller = None
 
-        # Offset to synchronise times
-        self._hamr_time_offset = 0.0
+        self._simulation_start_time = time.time()  # This is what we base Simulation Time from
 
         self._local_address = local_address
 
@@ -168,8 +167,6 @@ class Modem:
         self._label = label
 
         self._startup_time = time.time()
-        self._local_received_time = None
-        self._local_sent_time = None
         self._last_packet_received_time = None
         self._last_packet_sent_time = None
 
@@ -177,7 +174,7 @@ class Modem:
         self._last_update_time_time_packet = 0.0
         self._last_update_time_node_packet = 0.0
         self._last_update_time_modem_packet = 0.0
-        self._controller_update_rate = 10.0
+        self._controller_update_rate = 2.0
 
         # Transmitter
         self._transmitting_acoustic_packet = None  # The current outgoing acoustic packet
@@ -285,19 +282,19 @@ class Modem:
     def label(self, label: str):
         self._label = label
 
-    def get_hamr_time(self, local_time=None):
-        """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
+    def get_simulation_time(self, local_time=None):
+        """Get simulation time from either local_time or time.time()."""
         if local_time:
-            hamr_time = self._hamr_time_offset + local_time
-            return hamr_time
+            simulation_time = local_time - self._simulation_start_time
+            return simulation_time
         else:
-            hamr_time = self._hamr_time_offset + time.time()
-            return hamr_time
+            simulation_time = time.time() - self._simulation_start_time
+            return simulation_time
 
-    def get_local_time(self, hamr_time=None):
-        """Get local time from Homogenous Acoustic Medium Relative time or time.time()."""
-        if hamr_time:
-            local_time = hamr_time - self._hamr_time_offset
+    def get_local_time(self, simulation_time=None):
+        """Get local time from simulation start time or time.time()."""
+        if simulation_time:
+            local_time = simulation_time + self._simulation_start_time
             return local_time
         else:
             return time.time()
@@ -396,10 +393,13 @@ class Modem:
                         msg = self._socket.recv_multipart(zmq.DONTWAIT)
 
                         network_message_json_bytes = msg[0]
-                        zmq_timestamp = float(msg[1].decode('utf-8'))
+                        transmitted_simulation_timestamp = float(msg[1].decode('utf-8'))  # bytes array of the float string - timestamp of the sender
 
-                        self._local_received_time = time.time()
-                        _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from Controller received at: " + str(self._local_received_time))
+                        received_local_time = time.time()
+                        received_simulation_time = self.get_simulation_time(received_local_time)
+
+                        _debug_print("NetworkPacket (len=" + str(len(msg)) + ") from Controller received at: "
+                                     + str(received_local_time))
                         network_message_json_str = network_message_json_bytes.decode('utf-8')
                         network_message_jason = json.loads(network_message_json_str)
 
@@ -409,13 +409,16 @@ class Modem:
                         if "TimePacket" in network_message_jason:
                             # Process the TimePacket
                             time_packet = TimePacket.from_json(network_message_jason["TimePacket"])
-                            time_packet.client_arrival_time = self._local_received_time
-                            #time_packet.server_transmit_time = zmq_timestamp
-                            self._hamr_time_offset = time_packet.calculate_offset()
+                            time_packet.client_arrival_time = received_local_time
+
+                            # Calculate latency and therefore what local_time represents simulation start time
+                            latency = time_packet.latency_offset  # one way travel time
+                            self._simulation_start_time = received_local_time - \
+                                                          (transmitted_simulation_timestamp + latency)
 
                             print(time_packet.to_string())
 
-                            print("TimePacket offset: " + str(self._hamr_time_offset))
+                            print("TimePacket latency: " + str(latency))
 
                         # Acoustic Packet - Queue up for processing
                         if "AcousticPacket" in network_message_jason:
@@ -444,11 +447,11 @@ class Modem:
             # Process Outgoing Acoustic Packet
             if self._transmitting_acoustic_packet:
                 # Are we still transmitting
-                if self._transmitting_acoustic_packet.hamr_timestamp + \
-                        self._transmitting_acoustic_packet.transmit_duration <= self.get_hamr_time():
+                if self._transmitting_acoustic_packet.simulation_timestamp + \
+                        self._transmitting_acoustic_packet.transmit_duration <= self.get_simulation_time():
                     # Transmission complete
-                    #print("Current HAMR Time=" + str(self.get_hamr_time()))
-                    #print("self._transmitting_acoustic_packet.hamr_timestamp=" + str(self._transmitting_acoustic_packet.hamr_timestamp))
+                    #print("Current Simulation Time=" + str(self.get_simulation_time()))
+                    #print("self._transmitting_acoustic_packet.simulation_timestamp=" + str(self._transmitting_acoustic_packet.simulation_timestamp))
                     #print("self._transmitting_acoustic_packet.transmit_duration=" + str(self._transmitting_acoustic_packet.transmit_duration))
                     self._transmitting_acoustic_packet = None
                     # Return to listening
@@ -465,8 +468,8 @@ class Modem:
             # Process Arriving Acoustic Packets
             if self._arriving_acoustic_packets:
 
-                if self._arriving_acoustic_packets[0].hamr_timestamp + \
-                        self._arriving_acoustic_packets[0].transmit_duration <= self.get_hamr_time():
+                if self._arriving_acoustic_packets[0].simulation_timestamp + \
+                        self._arriving_acoustic_packets[0].transmit_duration <= self.get_simulation_time():
                     # Packet has now completed arriving
                     acoustic_packet = self._arriving_acoustic_packets.pop(0)
 
@@ -477,13 +480,15 @@ class Modem:
 
                     if self._modem_state == Modem.MODEM_STATE_RECEIVING:
                         if self._receiver_state == Modem.RECEIVER_STATE_SINGLE_ARRIVAL \
-                            and random.random() < probability_of_delivery:
+                                                   and random.random() < probability_of_delivery:
                             # Single arrival and received successfully
-                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_SUCCESS, acoustic_packet)
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_SUCCESS,
+                                                    acoustic_packet)
                             self.process_acoustic_packet(acoustic_packet)
                         else:
                             # Receiving but failed
-                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_FAIL, acoustic_packet)
+                            self.update_modem_state(Modem.MODEM_STATE_LISTENING, Modem.MODEM_EVENT_RECEIVE_FAIL,
+                                                    acoustic_packet)
                             pass
 
                     else:
@@ -528,10 +533,10 @@ class Modem:
         jason = {"TimePacket": time_packet.json()}
         json_string = json.dumps(jason)
         self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
-        self._local_sent_time = time.time()
-        _debug_print("NetworkPacket (TimePacket) to Controller sent at: " + str(self._local_sent_time))
+        sent_time = time.time()
+        _debug_print("NetworkPacket (TimePacket) to Controller sent at: " + str(sent_time))
 
-        self._last_update_time_time_packet = self._local_sent_time
+        self._last_update_time_time_packet = sent_time
 
         return
 
@@ -540,42 +545,40 @@ class Modem:
         Returns time sent"""
         jason = { "AcousticPacket": acoustic_packet.json() }
         json_string = json.dumps(jason)
-        self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
+        self._socket.send_multipart([json_string.encode('utf-8'), str(self.get_simulation_time()).encode('utf-8')])
 
-        self._local_sent_time = time.time()
-        _debug_print("NetworkPacket (AcousticPacket) to Controller sent at: " + str(self._local_sent_time))
-        if self._local_received_time:
-            _debug_print("-Turnaround: " + str(self._local_sent_time-self._local_received_time))
+        sent_time = time.time()
+        _debug_print("NetworkPacket (AcousticPacket) to Controller sent at: " + str(sent_time))
 
-        return self._local_sent_time
+        return sent_time
 
     def send_node_packet(self, node_packet: NodePacket):
         """Send a NodePacket.
         Returns time sent"""
         jason = { "NodePacket": node_packet.json() }
         json_string = json.dumps(jason)
-        self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
+        self._socket.send_multipart([json_string.encode('utf-8'), str(self.get_simulation_time()).encode('utf-8')])
 
-        self._local_sent_time = time.time()
-        _debug_print("NetworkPacket (NodePacket) to Controller sent at: " + str(self._local_sent_time))
+        sent_time = time.time()
+        _debug_print("NetworkPacket (NodePacket) to Controller sent at: " + str(sent_time))
 
-        self._last_update_time_node_packet = self._local_sent_time
+        self._last_update_time_node_packet = sent_time
 
-        return self._local_sent_time
+        return sent_time
 
     def send_modem_packet(self, modem_packet: ModemPacket):
         """Send a ModemPacket.
         Returns time sent"""
         jason = { "ModemPacket": modem_packet.json() }
         json_string = json.dumps(jason)
-        self._socket.send_multipart([json_string.encode('utf-8'), str(time.time()).encode('utf-8')])
+        self._socket.send_multipart([json_string.encode('utf-8'), str(self.get_simulation_time()).encode('utf-8')])
 
-        self._local_sent_time = time.time()
-        _debug_print("NetworkPacket (ModemPacket) to Controller sent at: " + str(self._local_sent_time))
+        sent_time = time.time()
+        _debug_print("NetworkPacket (ModemPacket) to Controller sent at: " + str(sent_time))
 
-        self._last_update_time_modem_packet = self._local_sent_time
+        self._last_update_time_modem_packet = sent_time
 
-        return self._local_sent_time
+        return sent_time
 
     def update_modem_state(self, modem_state, modem_event=None, acoustic_packet: AcousticPacket = None):
         self._modem_state = modem_state
@@ -615,8 +618,8 @@ class Modem:
                     # This is the Ack we are looking for.
                     self.update_modem_state(Modem.MODEM_STATE_UARTING, Modem.MODEM_EVENT_RECEIVE_SUCCESS)
                     if self._output_stream and self._output_stream.writable():
-                        local_received_time = self.get_local_time(acoustic_packet.hamr_timestamp)
-                        delay_time = local_received_time - self._acoustic_ack_wait_time
+                        local_received_time = self.get_local_time(acoustic_packet.simulation_timestamp)
+                        delay_time = local_received_time - self._acoustic_ack_wait_time - self._acoustic_ack_fixed_offset_time
                         _debug_print("Ack delay_time: " + str(delay_time))
                         timeval = int(delay_time * 16000.0)
                         response_str = "#R" + "{:03d}".format(
@@ -635,11 +638,14 @@ class Modem:
                     # CMD_PING_REQ, CMD_PING_REP, CMD_TEST_REQ, CMD_VBATT_REQ = range(4)
                     if acoustic_packet.command == AcousticPacket.CMD_PING_REQ:
                         # Ping request so send a reply
+                        ack_simulation_timestamp = acoustic_packet.simulation_timestamp \
+                                                   + acoustic_packet.transmit_duration \
+                                                   + self._acoustic_ack_fixed_offset_time
                         acoustic_packet_to_send = AcousticPacket(
                             frame_synch=AcousticPacket.FRAMESYNCH_DN,
                             address=self._local_address,
                             command=AcousticPacket.CMD_PING_REP,
-                            hamr_timestamp=acoustic_packet.hamr_timestamp)
+                            simulation_timestamp=ack_simulation_timestamp)
                         self.send_acoustic_packet(acoustic_packet_to_send)
                         self._transmitting_acoustic_packet = acoustic_packet_to_send
                         self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -655,7 +661,7 @@ class Modem:
                             command=AcousticPacket.CMD_BROADCAST_MSG,
                             payload_length=len(payload_bytes),
                             payload_bytes=payload_bytes,
-                            hamr_timestamp=self.get_hamr_time())
+                            simulation_timestamp=self.get_simulation_time())
                         self.send_acoustic_packet(acoustic_packet_to_send)
                         self._transmitting_acoustic_packet = acoustic_packet_to_send
                         self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -670,8 +676,7 @@ class Modem:
                         # "#U..."
                         if self._output_stream and self._output_stream.writable():
                             response_bytes = b"#U" \
-                                             + "{:02d}".format(
-                                acoustic_packet.payload_length).encode('utf-8') \
+                                             + "{:02d}".format(acoustic_packet.payload_length).encode('utf-8') \
                                              + bytes(acoustic_packet.payload_bytes) + b"\r\n"
                             self._output_stream.write(response_bytes)
                             self._output_stream.flush()
@@ -681,21 +686,22 @@ class Modem:
                         # "#B..."
                         if self._output_stream and self._output_stream.writable():
                             response_bytes = b"#B" \
-                                             + "{:03d}".format(
-                                acoustic_packet.address).encode('utf-8') \
-                                             + "{:02d}".format(
-                                acoustic_packet.payload_length).encode('utf-8') \
+                                             + "{:03d}".format(acoustic_packet.address).encode('utf-8') \
+                                             + "{:02d}".format(acoustic_packet.payload_length).encode('utf-8') \
                                              + bytes(acoustic_packet.payload_bytes) + b"\r\n"
                             self._output_stream.write(response_bytes)
                             self._output_stream.flush()
 
                     elif acoustic_packet.command == AcousticPacket.CMD_UNICAST_ACK_MSG and acoustic_packet.address == self._local_address:
                         # Ack request so send a reply
+                        ack_simulation_timestamp = acoustic_packet.simulation_timestamp \
+                                                   + acoustic_packet.transmit_duration \
+                                                   + self._acoustic_ack_fixed_offset_time
                         acoustic_packet_to_send = AcousticPacket(
                             frame_synch=AcousticPacket.FRAMESYNCH_DN,
                             address=self._local_address,
                             command=AcousticPacket.CMD_PING_REP,
-                            hamr_timestamp=acoustic_packet.hamr_timestamp)
+                            simulation_timestamp=ack_simulation_timestamp)
                         self.send_acoustic_packet(acoustic_packet_to_send)
                         self._transmitting_acoustic_packet = acoustic_packet_to_send
                         self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -718,7 +724,7 @@ class Modem:
                             command=AcousticPacket.CMD_BROADCAST_MSG,
                             payload_length=acoustic_packet.payload_length,
                             payload_bytes=acoustic_packet.payload_bytes,
-                            hamr_timestamp=self.get_hamr_time())
+                            simulation_timestamp=self.get_simulation_time())
                         self.send_acoustic_packet(acoustic_packet_to_send)
                         self._transmitting_acoustic_packet = acoustic_packet_to_send
                         self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -853,13 +859,15 @@ class Modem:
                             self._output_stream.flush()
 
                             # Send to the Controller
-                            self._acoustic_ack_wait_time = self.get_local_time()
-
                             acoustic_packet_to_send = AcousticPacket(
                                 frame_synch=AcousticPacket.FRAMESYNCH_UP,
                                 address=address_to_ping,
                                 command=AcousticPacket.CMD_PING_REQ,
-                                hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
+                                simulation_timestamp=self.get_simulation_time())
+
+                            # ACK wait time starts at the end of transmission
+                            self._acoustic_ack_wait_time = acoustic_packet_to_send.simulation_timestamp + acoustic_packet_to_send.transmit_duration
+
                             self.send_acoustic_packet(acoustic_packet_to_send)
                             self._transmitting_acoustic_packet = acoustic_packet_to_send
                             self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -896,13 +904,11 @@ class Modem:
                             self._output_stream.flush()
 
                             # Send to the Controller
-                            self._acoustic_ack_wait_time = self.get_local_time()
-
                             acoustic_packet_to_send = AcousticPacket(
                                 frame_synch=AcousticPacket.FRAMESYNCH_UP,
                                 address=address_to_test,
                                 command=AcousticPacket.CMD_TEST_REQ,
-                                hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
+                                simulation_timestamp=self.get_simulation_time())
                             self.send_acoustic_packet(acoustic_packet_to_send)
                             self._transmitting_acoustic_packet = acoustic_packet_to_send
                             self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)
@@ -976,14 +982,16 @@ class Modem:
                         elif self._message_type == 'E':
                             acoustic_packet_command_to_send = AcousticPacket.CMD_ECHO_MSG
 
-                        self._acoustic_ack_wait_time = self.get_local_time()
                         acoustic_packet_to_send = AcousticPacket(
                             frame_synch=AcousticPacket.FRAMESYNCH_UP,
                             address=self._message_address,
                             command=acoustic_packet_command_to_send,
                             payload_length=len(self._message_bytes),
                             payload_bytes=self._message_bytes,
-                            hamr_timestamp=self.get_hamr_time(self._acoustic_ack_wait_time))
+                            simulation_timestamp=self.get_simulation_time())
+                        # ACK wait time starts at the end of transmission
+                        self._acoustic_ack_wait_time = acoustic_packet_to_send.simulation_timestamp + acoustic_packet_to_send.transmit_duration
+
                         self.send_acoustic_packet(acoustic_packet_to_send)
                         self._transmitting_acoustic_packet = acoustic_packet_to_send
                         self.update_modem_state(Modem.MODEM_STATE_TRANSMITTING, Modem.MODEM_EVENT_TRANSMIT_START)

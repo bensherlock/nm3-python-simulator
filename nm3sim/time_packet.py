@@ -75,18 +75,16 @@ class TimePacket:
     def client_arrival_time(self, client_arrival_time):
         self._client_arrival_time = client_arrival_time
 
-
     @property
-    def offset(self):
-        time_offset = (self._server_arrival_time - self._client_transmit_time) \
-                      + (self._server_transmit_time - self._client_arrival_time) / 2.0
-        return time_offset
-
-    @property
-    def delay(self):
+    def round_trip_delay(self):
+        # https://en.wikipedia.org/wiki/Network_Time_Protocol
         round_trip_delay = (self._client_arrival_time - self._client_transmit_time) \
                            - (self._server_transmit_time - self._server_arrival_time)
         return round_trip_delay
+
+    @property
+    def latency_offset(self):
+        return self.round_trip_delay / 2.0
 
 
     def calculate_offset(self):
@@ -122,6 +120,5 @@ class TimePacket:
                + "\n  server_arrival_time  = " + str(self.server_arrival_time) \
                + "\n  server_transmit_time = " + str(self.server_transmit_time) \
                + "\n  client_arrival_time  = " + str(self.client_arrival_time) \
-               + "\n  offset               = " + str(self.offset) \
-               + "\n  delay                = " + str(self.delay)
+               + "\n  latency_offset               = " + str(self.latency_offset)
 

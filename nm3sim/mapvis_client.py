@@ -63,23 +63,19 @@ class MapVisualisation:
         self._socket = None
         self._socket_poller = None
 
-        # Offset to synchronise times - Based on Simulation Time = 0.0
-        self._hamr_time_offset = 0.0
+        self._simulation_start_time = time.time()  # This is what we base Simulation Time from
 
-        self._simulation_start_time = 0.0
         self._playback_speed = 1.0  # This may be slower depending on the controller
-
 
         self._speed_of_sound = 1500.0  # To be provided from elsewhere.
         self._max_acoustic_propagation_range = 4000.0
-
-
 
         self._nodes = {}  # Map unique_id to node
         self._node_acoustic_packets = {}  # Map unique id to list of acoustic packets
         self._node_modem_states = {}  # Map unique id to modem state
 
         self._display_to_be_updated = True
+        self._display_last_update_time = 0.0
 
         self._figure = None
         self._map_ax = None
@@ -93,22 +89,6 @@ class MapVisualisation:
 
         return simulation_time
 
-    def get_hamr_time(self, local_time=None):
-        """Get Homogenous Acoustic Medium Relative time from either local_time or time.time()."""
-        if local_time:
-            hamr_time = self._hamr_time_offset + local_time
-            return hamr_time
-        else:
-            hamr_time = self._hamr_time_offset + time.time()
-            return hamr_time
-
-    def get_local_time(self, hamr_time=None):
-        """Get local time from Homogenous Acoustic Medium Relative time or time.time()."""
-        if hamr_time:
-            local_time = hamr_time - self._hamr_time_offset
-            return local_time
-        else:
-            return time.time()
 
     def add_node(self, unique_id):
         """Add a new NodeBase to the controller.
@@ -198,9 +178,10 @@ class MapVisualisation:
     def update_display(self):
         """Update the visual display if information has changed since last render."""
 
-        if self._display_to_be_updated:
+        if self._display_to_be_updated or time.time() > (self._display_last_update_time + 1.0):
             #print("updating scatter")
             self._display_to_be_updated = False  # Clear flag
+            self._display_last_update_time = time.time()
 
             self._map_ax.clear()
 
@@ -252,13 +233,14 @@ class MapVisualisation:
                 self._map_ax.set_aspect(1)  # square
                 self._map_ax.set_xlabel("x (m)")
                 self._map_ax.set_ylabel("y (m)")
+                self._map_ax.set_title("Simulation Time {:0.3f}s Playback Speed {:0.2f}".format(self.get_simulation_time(), self._playback_speed))
 
                 #for node in self._nodes.values():
                 #    if node.label:
                 #        self._map_ax.text(x=node.position_xy[0], y=node.position_xy[1], s=node.label)
 
 
-            current_hamr_time = self.get_hamr_time()
+            current_simulation_time = self.get_simulation_time()
 
             for node_id in self._nodes.keys():
                 node = self._nodes[node_id]
@@ -266,8 +248,8 @@ class MapVisualisation:
                 for acoustic_packet in self._node_acoustic_packets[node_id]:
                     self._display_to_be_updated = True # Still have acoustic packets to display
 
-                    outer_diameter = (current_hamr_time - acoustic_packet.hamr_timestamp) * self._speed_of_sound
-                    inner_diameter = (current_hamr_time - acoustic_packet.hamr_timestamp - acoustic_packet.transmit_duration) * self._speed_of_sound
+                    outer_diameter = (current_simulation_time - acoustic_packet.simulation_timestamp) * self._speed_of_sound
+                    inner_diameter = (current_simulation_time - acoustic_packet.simulation_timestamp - acoustic_packet.transmit_duration) * self._speed_of_sound
 
                     circle_color = '#F0F0F0A0'
 
@@ -329,6 +311,7 @@ class MapVisualisation:
         # Create the display
         self.create_display()
 
+        vis_start_time = time.time()
         while True:
             # Poll the socket for incoming "acoustic" messages
             #_debug_print("Checking socket poller")
@@ -345,20 +328,20 @@ class MapVisualisation:
                         topic = msg[0]
                         node_id = msg[1]
                         network_message_json_bytes = msg[2]
-                        zmq_timestamp = float(msg[3].decode('utf-8'))
-                        simulation_time = float(msg[4].decode('utf-8'))
+                        transmitted_simulation_timestamp = float(msg[3].decode('utf-8'))
+                        received_simulation_time = float(msg[4].decode('utf-8'))
                         playback_speed = float(msg[5].decode('utf-8'))
 
-                        # calculate local time equivalent for the simulation start
-                        self._simulation_start_time = local_received_time - (simulation_time / playback_speed)
-
-                        self._hamr_time_offset = local_received_time - zmq_timestamp
-
+                        # calculate local time equivalent for the simulation start each packet received
+                        self._playback_speed = playback_speed
+                        self._simulation_start_time = local_received_time - (received_simulation_time / playback_speed)
 
                         network_message_json_str = network_message_json_bytes.decode('utf-8')
                         network_message_jason = json.loads(network_message_json_str)
 
                         _debug_print("Network Packet received: " + network_message_json_str)
+                        #print("vis_time=" + str(time.time() - vis_start_time)
+                        #      + " simulation_time=" + str(self.get_simulation_time()))
 
                         if "NodePacket" in network_message_jason:
                             # Process the NodePacket

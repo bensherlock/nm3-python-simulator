@@ -78,12 +78,12 @@ class SimulationLogger:
             self._log_file.write("\n")
             self._log_file.write('] }')
 
-    def log_packet(self, simulation_time, zmq_timestamp, unique_id, network_message_jason):
-        """Log the packet to file for analysis or playback"""
+    def log_packet(self, transmitted_simulation_time, received_simulation_time, unique_id, network_message_jason):
+        """Log the packet to file for analysis or playback."""
         if self._log_file:
             log_entry_jason = {
-                "SimulationTime": simulation_time,
-                "ZmqTimestamp": zmq_timestamp,
+                "TransmittedSimulationTime": transmitted_simulation_time,
+                "ReceivedSimulationTime": received_simulation_time,
                 "UniqueId": list(unique_id),
                 "NetworkMessage": network_message_jason
             }
@@ -154,8 +154,8 @@ class SimulationLogger:
                             topic = msg[0]
                             node_id = msg[1]
                             network_message_json_bytes = msg[2]
-                            zmq_timestamp = float(msg[3].decode('utf-8'))
-                            simulation_time = float(msg[4].decode('utf-8'))
+                            transmitted_simulation_timestamp = float(msg[3].decode('utf-8'))
+                            received_simulation_time = float(msg[4].decode('utf-8'))
 
                             network_message_json_str = network_message_json_bytes.decode('utf-8')
                             network_message_jason = json.loads(network_message_json_str)
@@ -163,8 +163,8 @@ class SimulationLogger:
                             _debug_print("Network Packet received: " + network_message_json_str)
 
                             # Log received NetworkMessages.
-                            self.log_packet(simulation_time, zmq_timestamp, node_id, network_message_jason)
-
+                            self.log_packet(transmitted_simulation_timestamp, received_simulation_time, node_id,
+                                            network_message_jason)
 
                         except zmq.ZMQError:
                             more_messages = False
