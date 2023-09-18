@@ -60,6 +60,14 @@ Connects to the publish port of the controller.
 
 `D:\nm3-python-simulator>python -m nm3sim.mapvis_client --network_address 127.0.0.1 --network_port 8081`
 
+# Examples
+
+## Simple TDMA Example
+
+This will run all the necessary components including Controller, Sensor Nodes and Gateway Node, plus Logger and Visualisation. The network protocol displayed is a simple TDMA wth the Gateway transmitting a Beacon broadcast and the Sensor Node then sending a Unicast duirng their alloted timeslot.  
+
+`D:\nm3-python-simulator>python -m examples.simple_example`
+
 # Issues
 
 Please log any issues to https://github.com/bensherlock/nm3-python-simulator/issues
