@@ -35,6 +35,7 @@ from threading import Thread
 from .modem import Modem
 from .utils import *
 from nm3driver.nm3logger import Nm3Logger
+from nm3driver.nm3driver import Nm3
 
 def node_position_parser(s):
     """Expects arguments as (x,y,depth)"""

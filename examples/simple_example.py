@@ -63,7 +63,7 @@ def start_controller(network_address, network_port, publish_port, log_filename):
 
     try:
         controller.start()
-    except KeyboardInterrupt:
+    finally:
         controller.stop()
 
 
@@ -76,7 +76,10 @@ def start_logger(network_address, network_port, log_filename):
                               network_port=network_port,
                               log_filename=log_filename)
 
-    client.run()
+    try:
+        client.run()
+    finally:
+        client.stop()
 
 
 def start_mapvis(network_address, network_port):
@@ -86,8 +89,10 @@ def start_mapvis(network_address, network_port):
 
     client = MapVisualisation(network_address=network_address,
                               network_port=network_port)
-
-    client.run()
+    try:
+        client.run()
+    finally:
+        client.stop()
 
 
 
@@ -105,8 +110,10 @@ def start_transponder(network_address, network_port, address, position_xy, depth
                   position_xy=position_xy,
                   depth=depth,
                   label=label)
-
-    modem.run()
+    try:
+        modem.run()
+    finally:
+        modem.stop()
 
 
 
@@ -147,34 +154,37 @@ def start_gateway_node(network_address, network_port, address, position_xy, dept
     #tdma_offset = (address - 100) * tdma_window_size
 
     # Now here run a while loop to process the modem serial comms
-    while True:
-        if time.time() >= last_frame_time + frame_interval:
-            # Send the beacon
-            last_frame_time = time.time()
-            nm3_modem.send_broadcast_message(b'BEACON')
+    try:
+        while True:
+            if time.time() >= last_frame_time + frame_interval:
+                # Send the beacon
+                last_frame_time = time.time()
+                nm3_modem.send_broadcast_message(b'BEACON')
 
 
-        nm3_modem.poll_receiver() # non-blocking returns immediately if no bytes ready to read.
+            nm3_modem.poll_receiver() # non-blocking returns immediately if no bytes ready to read.
 
-        # Periodically process any bytes received
-        nm3_modem.process_incoming_buffer()
+            # Periodically process any bytes received
+            nm3_modem.process_incoming_buffer()
 
-        # Periodically check for received packets
-        while nm3_modem.has_received_packet():
-            message_packet = nm3_modem.get_received_packet()
+            # Periodically check for received packets
+            while nm3_modem.has_received_packet():
+                message_packet = nm3_modem.get_received_packet()
 
-            print('Gateway Received message packet: ' +
-                  MessagePacket.PACKETTYPE_NAMES[message_packet.packet_type] +
-                  ' src: ' + str(message_packet.source_address) +
-                  ' dest: ' + str(message_packet.destination_address) +
-                  ' payload: ' + str(message_packet.packet_payload) +
-                  ' payload text: ' + bytes(message_packet.packet_payload).decode('utf-8'))
+                print('Gateway Received message packet: ' +
+                      MessagePacket.PACKETTYPE_NAMES[message_packet.packet_type] +
+                      ' src: ' + str(message_packet.source_address) +
+                      ' dest: ' + str(message_packet.destination_address) +
+                      ' payload: ' + str(message_packet.packet_payload) +
+                      ' payload text: ' + bytes(message_packet.packet_payload).decode('utf-8'))
 
-        # Yield the thread
-        time.sleep(0)
+            # Yield the thread
+            time.sleep(0)
 
-        pass
+            pass
 
+    finally:
+        modem.stop()
 
 
 
@@ -209,45 +219,47 @@ def start_sensor_node(network_address, network_port, address, position_xy, depth
     tdma_offset = (address - 100) * tdma_window_size
 
     # Now here run a while loop to process the modem serial comms
-    while True:
-        nm3_modem.poll_receiver() # non-blocking returns immediately if no bytes ready to read.
+    try:
+        while True:
+            nm3_modem.poll_receiver() # non-blocking returns immediately if no bytes ready to read.
 
-        # Periodically process any bytes received
-        nm3_modem.process_incoming_buffer()
+            # Periodically process any bytes received
+            nm3_modem.process_incoming_buffer()
 
-        # Periodically check for received packets
-        while nm3_modem.has_received_packet():
-            message_packet = nm3_modem.get_received_packet()
+            # Periodically check for received packets
+            while nm3_modem.has_received_packet():
+                message_packet = nm3_modem.get_received_packet()
 
-            print('Sensor ' + label + ' Received message packet: ' +
-                  MessagePacket.PACKETTYPE_NAMES[message_packet.packet_type] +
-                  ' src: ' + str(message_packet.source_address) +
-                  ' dest: ' + str(message_packet.destination_address) +
-                  ' payload: ' + str(message_packet.packet_payload) +
-                  ' payload text: ' + bytes(message_packet.packet_payload).decode('utf-8'))
+                print('Sensor ' + label + ' Received message packet: ' +
+                      MessagePacket.PACKETTYPE_NAMES[message_packet.packet_type] +
+                      ' src: ' + str(message_packet.source_address) +
+                      ' dest: ' + str(message_packet.destination_address) +
+                      ' payload: ' + str(message_packet.packet_payload) +
+                      ' payload text: ' + bytes(message_packet.packet_payload).decode('utf-8'))
 
-            # Network Protocol
-            if message_packet.packet_type == MessagePacket.PACKETTYPE_BROADCAST:
-                if message_packet.packet_payload == [int(i) for i in bytes(b'BEACON')]:
-                    beacon_time = time.time()
-                    beacon_address = message_packet.source_address
+                # Network Protocol
+                if message_packet.packet_type == MessagePacket.PACKETTYPE_BROADCAST:
+                    if message_packet.packet_payload == [int(i) for i in bytes(b'BEACON')]:
+                        beacon_time = time.time()
+                        beacon_address = message_packet.source_address
 
-                    # Get the sensor data
+                        # Get the sensor data
 
-                    while time.time() < (beacon_time + tdma_offset):
-                        pass
+                        while time.time() < (beacon_time + tdma_offset):
+                            pass
 
-                    # Now send the sensor data
-                    payload = bytes(b'SENSOR') + bytes(label.encode('utf-8'))
-                    nm3_modem.send_unicast_message(beacon_address, payload)
+                        # Now send the sensor data
+                        payload = bytes(b'SENSOR') + bytes(label.encode('utf-8'))
+                        nm3_modem.send_unicast_message(beacon_address, payload)
 
 
 
-        # Yield the thread
-        time.sleep(0.001)
+            # Yield the thread
+            time.sleep(0.001)
 
-        pass
-
+            pass
+    finally:
+        modem.stop()
 
 def start_terminal_modem(network_address, network_port, address, position_xy, depth, label):
     #
@@ -271,8 +283,10 @@ def start_terminal_modem(network_address, network_port, address, position_xy, de
                   position_xy=position_xy,
                   depth=depth,
                   label=label)
-
-    modem.run()
+    try:
+        modem.run()
+    finally:
+        modem.stop()
 
 
 def main():

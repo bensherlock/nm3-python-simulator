@@ -54,6 +54,7 @@ class SimulationLogger:
     """Simulation Logger Client."""
 
     def __init__(self, network_address=None, network_port=None, log_filename=None):
+        self._is_running = False
         self._network_address = network_address
         self._network_port = network_port
         self._socket = None
@@ -98,6 +99,10 @@ class SimulationLogger:
 
         pass
 
+    def stop(self):
+        """Stop the client for shutdown."""
+        self._is_running = False
+
     def run(self):
         """Run the client. Never returns."""
         # Connect to the controller
@@ -138,7 +143,8 @@ class SimulationLogger:
                 pass
 
         try:
-            while True:
+            self._is_running = True
+            while self._is_running:
                 # Poll the socket for incoming "acoustic" messages
                 #_debug_print("Checking socket poller")
                 sockets = dict(self._socket_poller.poll(1))
@@ -225,8 +231,10 @@ def main():
     client = SimulationLogger(network_address=network_address,
                               network_port=network_port,
                               log_filename=log_filename)
-
-    client.run()
+    try:
+        client.run()
+    finally:
+        client.stop()
 
 
 if __name__ == '__main__':

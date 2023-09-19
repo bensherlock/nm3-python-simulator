@@ -129,6 +129,7 @@ class Modem:
                  network_address=None, network_port=None, local_address: int =255, position_xy=(0.0,0.0), depth=10.0, label=None):
         """input_stream and output_stream implement the Bytes IO interface.
         Namely: readable()->bool, writeable()->bool, read(bytes) and write(bytes)."""
+        self._is_running = False
         self._input_stream = input_stream
         self._output_stream = output_stream
         self._simulator_state = Modem.SIMULATOR_STATE_IDLE
@@ -336,8 +337,12 @@ class Modem:
 
         return probability_of_delivery
 
+    def stop(self):
+        """End the simulator for shutdown."""
+        self._is_running = False
+
     def run(self):
-        """Run the simulator. Never returns."""
+        """Run the simulator. Never returns. Shutdown by calling stop()"""
         # Connect to the controller
         if not self._network_address or not self._network_port:
             raise TypeError("Network Address/Port not set. Address("
@@ -356,7 +361,8 @@ class Modem:
             self._socket_poller.register(self._socket, zmq.POLLIN)
             self.send_time_packet()
 
-        while True:  # Main Loop
+        self._is_running = True
+        while self._is_running:  # Main Loop
             # 1. Node Position - Updated or Periodic
             if self._position_information_updated or (time.time() > (self._last_update_time_node_packet + self._controller_update_rate)):
                 # Send positional information update

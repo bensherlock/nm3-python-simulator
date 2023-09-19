@@ -100,8 +100,10 @@ def main():
                   position_xy=position_xy,
                   depth=depth,
                   label=label)
-
-    modem.run()
+    try:
+        modem.run()
+    finally:
+        modem.stop()
 
 
 if __name__ == '__main__':

@@ -58,6 +58,7 @@ class MapVisualisation:
     """Map Visualisation Client."""
 
     def __init__(self, network_address=None, network_port=None):
+        self._is_running = False
         self._network_address = network_address
         self._network_port = network_port
         self._socket = None
@@ -281,9 +282,12 @@ class MapVisualisation:
 
         plt.pause(0.001)
 
+    def stop(self):
+        """Stops the client for shutdown."""
+        self._is_running = False
 
     def run(self):
-        """Run the client. Never returns."""
+        """Run the client. Never returns. Call stop() for shutdown."""
         # Connect to the controller
         if not self._network_address or not self._network_port:
             raise TypeError("Network Address/Port not set. Address("
@@ -312,7 +316,8 @@ class MapVisualisation:
         self.create_display()
 
         vis_start_time = time.time()
-        while True:
+        self._is_running = True
+        while self._is_running:
             # Poll the socket for incoming "acoustic" messages
             #_debug_print("Checking socket poller")
             sockets = dict(self._socket_poller.poll(1))
@@ -403,9 +408,11 @@ def main():
 
     # input_stream, output_stream, network_address=None, network_port=None, local_address=255, position_xy=(0.0,0.0), depth=10.0):
     client = MapVisualisation(network_address=network_address,
-                            network_port=network_port  )
-
-    client.run()
+                            network_port=network_port)
+    try:
+        client.run()
+    finally:
+        client.stop()
 
 
 if __name__ == '__main__':

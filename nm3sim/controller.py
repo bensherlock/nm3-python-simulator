@@ -371,6 +371,9 @@ class Controller:
             socket_id, network_packet_json_str, scheduled_network_packet = self.next_scheduled_network_packet(time.time())
 
 
+    def stop(self):
+        """Stop the controller for shutdown."""
+        self._is_running = False
 
     def run_live_mode(self):
         """Run in Live mode"""
@@ -419,7 +422,8 @@ class Controller:
 
 
         try:
-            while True:
+            self._is_running = True
+            while self._is_running:
                 # Poll the socket
                 # Router socket so first frame of multi part message is an identifier for the client.
                 # Incoming Network Messages
@@ -638,8 +642,10 @@ def main():
     propagation_model = PropagationModelSimple()
     controller.propagation_model = propagation_model
 
-    controller.start()
-
+    try:
+        controller.start()
+    finally:
+        controller.stop()
 
 
 if __name__ == '__main__':
